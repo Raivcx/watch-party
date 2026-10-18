@@ -392,7 +392,7 @@ function newPC(peerId, isHost) {
     let v = document.getElementById("screen-video");
     if (v) { v.srcObject = streams[0]; return; }
     v = document.createElement("video");
-    v.id = "screen-video"; v.autoplay = true; v.playsInline = true; v.muted = true;
+    v.id = "screen-video"; v.autoplay = true; v.playsInline = true; v.muted = false;
     v.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
     v.srcObject = streams[0];
     mediaEl.appendChild(v);
