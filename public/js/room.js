@@ -181,18 +181,38 @@ function setupYouTube(videoId) {
 // ── WebRTC Screen Share ───────────────────────────────────────────────────────
 let localStream = null;
 const peers = {};
-const ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+const ICE = { iceServers: [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+] };
 
 function setupScreenshare() {
   shareBtn.style.display = "block";
   shareBtn.addEventListener("click", startShare);
 
-  // Viewer: someone is sharing — request the stream
-  socket.on("connect", () => socket.emit("rtc-request-stream"));
-  socket.emit("rtc-request-stream");
+  // Viewer requests stream AFTER room-info confirms we're fully joined.
+  // Small delay lets the host process our user-joined event first.
+  setTimeout(() => socket.emit("rtc-request-stream"), 800);
 
-  // Host → viewer: receive offer
+  // Host receives a stream request from a viewer
+  socket.on("rtc-request-stream", ({ from }) => {
+    if (localStream) {
+      addSystem(`Enviando stream para ${from.slice(0,6)}…`);
+      sendOffer(from);
+    }
+  });
+
+  // Host receives a new user: send them the stream if sharing
+  socket.on("user-joined", ({ socketId }) => {
+    if (localStream) {
+      addSystem(`Novo usuário entrou — enviando stream…`);
+      sendOffer(socketId);
+    }
+  });
+
+  // Viewer receives offer from host
   socket.on("rtc-offer", async ({ from, sdp }) => {
+    addSystem("Recebendo stream…");
     const pc = newPC(from, false);
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
     const answer = await pc.createAnswer();
@@ -201,22 +221,15 @@ function setupScreenshare() {
   });
 
   socket.on("rtc-answer", async ({ from, sdp }) => {
-    if (peers[from]) await peers[from].setRemoteDescription(new RTCSessionDescription(sdp));
+    const pc = peers[from];
+    if (pc) await pc.setRemoteDescription(new RTCSessionDescription(sdp));
   });
 
   socket.on("rtc-ice", async ({ from, candidate }) => {
-    try { if (peers[from]) await peers[from].addIceCandidate(new RTCIceCandidate(candidate)); }
-    catch { /* late ICE, ignore */ }
-  });
-
-  // When a new viewer joins, host sends them an offer
-  socket.on("user-joined", ({ socketId }) => {
-    if (localStream) sendOffer(socketId);
-  });
-
-  // Viewer requested stream from host
-  socket.on("rtc-request-stream", ({ from }) => {
-    if (localStream) sendOffer(from);
+    const pc = peers[from];
+    if (!pc) return;
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); }
+    catch { /* late ICE */ }
   });
 }
 
