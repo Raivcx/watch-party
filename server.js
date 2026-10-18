@@ -5,7 +5,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { createRoom, getRoom, deleteRoom } from "./lib/roomStore.js";
+import { createRoom, getRoom } from "./lib/roomStore.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,7 +14,7 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: "*" },
-  maxHttpBufferSize: 1e6, // 1 MB — protects against oversized signaling payloads
+  maxHttpBufferSize: 1e6,
 });
 
 const PORT = process.env.PORT || 3000;
@@ -23,33 +23,29 @@ const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 app.use(express.json());
 app.use(express.static(join(__dirname, "public")));
 
-// --- REST: room metadata (optional, frontend uses it) ---
-app.get("/api/room/:id", (req, res) => {
-  const room = getRoom(req.params.id);
-  if (!room) return res.status(404).json({ error: "Room not found" });
-  res.json({
-    id: room.id,
-    type: room.type,
-    media: room.media,
-    createdAt: room.createdAt,
-  });
-});
-
 // Health check (used by Render + UptimeRobot to keep the free tier awake)
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
-// Catch-all: serve the room page (client-side routing by UUID in the path)
+// REST: room metadata
+app.get("/api/room/:id", (req, res) => {
+  const room = getRoom(req.params.id);
+  if (!room) return res.status(404).json({ error: "Room not found" });
+  res.json({ id: room.id, type: room.type, media: room.media, createdAt: room.createdAt });
+});
+
+// Catch-all: serve the room page
 app.get("/room/:id", (_req, res) => {
   res.sendFile(join(__dirname, "public", "room.html"));
 });
 
-// --- Socket.IO: chat, YouTube sync, WebRTC signaling ---
+// --- Socket.IO ---
 io.on("connection", (socket) => {
   let currentRoomId = null;
+  console.log(`[socket] connected: ${socket.id}`);
 
-  // Join a room
   socket.on("join-room", (roomId) => {
     const room = getRoom(roomId);
+    console.log(`[socket] join-room ${roomId} => found=${!!room}`);
     if (!room) {
       socket.emit("room-error", "Room does not exist or has expired.");
       return;
@@ -63,9 +59,10 @@ io.on("connection", (socket) => {
       media: room.media,
       yourId: socket.id,
     });
+    console.log(`[socket] room-info sent to ${socket.id}: type=${room.type}`);
   });
 
-  // --- Chat ---
+  // Chat
   socket.on("chat-message", ({ text }) => {
     if (!currentRoomId || !text) return;
     io.to(currentRoomId).emit("chat-message", {
@@ -75,57 +72,33 @@ io.on("connection", (socket) => {
     });
   });
 
-  // --- YouTube sync ---
-  socket.on("yt-action", ({ action, time, state }) => {
+  // YouTube sync
+  socket.on("yt-action", ({ action, time }) => {
     if (!currentRoomId) return;
-    // Broadcast sync to everyone except the sender
-    socket.to(currentRoomId).emit("yt-action", {
-      action, // play | pause | seek
-      time,
-      state,
-      from: socket.id,
-    });
+    socket.to(currentRoomId).emit("yt-action", { action, time, from: socket.id });
   });
 
-  // --- WebRTC signaling (screen sharing) ---
-  socket.on("rtc-offer", ({ to, sdp }) => {
-    io.to(to).emit("rtc-offer", { from: socket.id, sdp });
-  });
-
-  socket.on("rtc-answer", ({ to, sdp }) => {
-    io.to(to).emit("rtc-answer", { from: socket.id, sdp });
-  });
-
-  socket.on("rtc-ice", ({ to, candidate }) => {
-    io.to(to).emit("rtc-ice", { from: socket.id, candidate });
-  });
-
-  // New viewer asks host to start sharing
+  // WebRTC signaling
+  socket.on("rtc-offer",  ({ to, sdp })       => io.to(to).emit("rtc-offer",  { from: socket.id, sdp }));
+  socket.on("rtc-answer", ({ to, sdp })       => io.to(to).emit("rtc-answer", { from: socket.id, sdp }));
+  socket.on("rtc-ice",    ({ to, candidate }) => io.to(to).emit("rtc-ice",    { from: socket.id, candidate }));
   socket.on("rtc-request-stream", () => {
-    if (!currentRoomId) return;
-    socket.to(currentRoomId).emit("rtc-request-stream", { from: socket.id });
+    if (currentRoomId) socket.to(currentRoomId).emit("rtc-request-stream", { from: socket.id });
   });
 
-  // --- Disconnect ---
   socket.on("disconnect", () => {
+    console.log(`[socket] disconnected: ${socket.id}`);
     if (currentRoomId) {
       const room = getRoom(currentRoomId);
-      if (room) {
-        room.userCount = Math.max(0, room.userCount - 1);
-        if (room.userCount === 0) {
-          // Keep the room for a while so the host can rejoin; pruneStaleRooms cleans up.
-        }
-      }
+      if (room) room.userCount = Math.max(0, room.userCount - 1);
       socket.to(currentRoomId).emit("user-left", { socketId: socket.id });
     }
   });
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Public URL: ${PUBLIC_URL}`);
-  console.log(`Health check: ${PUBLIC_URL}/health`);
+  console.log(`Server running on port ${PORT} — ${PUBLIC_URL}`);
 });
 
-// Start the Discord bot in the same process (Render free tier = 1 web service)
+// Start Discord bot in the same process
 import "./bot/index.js";
