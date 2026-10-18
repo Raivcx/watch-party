@@ -96,9 +96,15 @@ io.on("connection", (socket) => {
       const room = getRoom(currentRoomId);
       if (room) {
         room.userCount = Math.max(0, room.userCount - 1);
-        if (room.hostSocketId === socket.id) room.hostSocketId = null;
+        if (room.hostSocketId === socket.id) {
+          // Host left — notify all viewers and destroy the room
+          io.to(currentRoomId).emit("host-left");
+          deleteRoom(currentRoomId);
+          console.log(`[room] ${currentRoomId} destroyed (host left)`);
+        } else {
+          socket.to(currentRoomId).emit("user-left", { socketId: socket.id });
+        }
       }
-      socket.to(currentRoomId).emit("user-left", { socketId: socket.id });
     }
   });
 });

@@ -67,6 +67,13 @@ socket.on("room-info", (info) => {
 
 socket.on("room-error", (msg) => showError(msg));
 
+socket.on("host-left", () => {
+  // Show overlay then redirect to home after 4 seconds
+  errorText.textContent = "O host encerrou a sessão. Esta sala foi fechada.";
+  errorOverlay.style.display = "flex";
+  setTimeout(() => { window.location.href = "/"; }, 4000);
+});
+
 socket.on("chat-message", addMessage);
 
 socket.on("user-joined", () => { updateCount(1); addSystem("A user joined."); });
