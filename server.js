@@ -6,6 +6,7 @@ import { Server } from "socket.io";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { createRoom, getRoom } from "./lib/roomStore.js";
+import { getStreams } from "./lib/streams.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -31,6 +32,33 @@ app.get("/api/room/:id", (req, res) => {
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: "Room not found" });
   res.json({ id: room.id, type: room.type, media: room.media, createdAt: room.createdAt });
+});
+
+// REST: fetch streams for a room from TMDB-Embed-API (called by the frontend)
+// Returns the first working stream URL + subtitle list.
+app.get("/api/streams/:roomId", async (req, res) => {
+  const room = getRoom(req.params.roomId);
+  if (!room) return res.status(404).json({ error: "Room not found" });
+  if (room.type !== "movie" && room.type !== "serie") {
+    return res.status(400).json({ error: "Not a movie/serie room" });
+  }
+
+  // Cache streams in the room object to avoid refetching on every join
+  if (room.streams) return res.json(room.streams);
+
+  try {
+    const streams = await getStreams({
+      type: room.type,
+      tmdbId: room.media.tmdbId,
+      season: room.media.season,
+      episode: room.media.episode,
+    });
+    room.streams = streams; // cache
+    res.json(streams);
+  } catch (err) {
+    console.error("[streams] fetch error:", err.message);
+    res.status(502).json({ error: "Stream fetch failed", detail: err.message });
+  }
 });
 
 // Catch-all: serve the room page
@@ -88,6 +116,14 @@ io.on("connection", (socket) => {
     const room = getRoom(currentRoomId);
     if (!room || room.hostSocketId !== socket.id) return; // only host can sync
     socket.to(currentRoomId).emit("pomfy-sync", { action, time });
+  });
+
+  // Video sync — HLS/MP4 player (host → viewers, real play/pause/seek)
+  socket.on("video-sync", ({ action, time }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room || room.hostSocketId !== socket.id) return; // only host syncs
+    socket.to(currentRoomId).emit("video-sync", { action, time });
   });
 
   // WebRTC signaling

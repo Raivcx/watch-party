@@ -129,10 +129,9 @@ async function handleWatch(interaction) {
       return modalInteraction.editReply(`No results found for "**${name}**".`);
     }
 
-    const url = `https://api.pomfy.stream/serie/${result.tmdbId}/${season}/${episode}`;
     const room = createRoom({
       type: "serie",
-      media: { ...result, url, season, episode },
+      media: { ...result, season, episode },
       hostUserId: interaction.user.id,
     });
 
@@ -161,10 +160,9 @@ async function handleWatch(interaction) {
     return interaction.editReply(`No results found for "**${name}**".`);
   }
 
-  const url = `https://api.pomfy.stream/filme/${result.tmdbId}`;
   const room = createRoom({
     type: "movie",
-    media: { ...result, url },
+    media: { ...result },
     hostUserId: interaction.user.id,
   });
 

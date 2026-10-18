@@ -1,5 +1,5 @@
 // Watch Party Room — Vanilla JS client
-// Handles: chat, YouTube IFrame sync, Pomfy iframe, WebRTC screen sharing
+// Media: HLS.js player (movie/serie via TMDB-Embed-API), YouTube sync, WebRTC screenshare
 
 const socket = io({ transports: ["websocket", "polling"] });
 const roomId = window.location.pathname.split("/room/")[1]?.split("/")[0];
@@ -15,8 +15,8 @@ const shareBtn     = document.getElementById("start-share-btn");
 const errorOverlay = document.getElementById("error-overlay");
 const errorText    = document.getElementById("error-text");
 
-let myId   = null;
-let isHost = false;
+let myId      = null;
+let isHost    = false;
 let onlineCount = 1;
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -50,248 +50,220 @@ function esc(s) {
   return d.innerHTML;
 }
 
-// ── Socket events ─────────────────────────────────────────────────────────────
+// ── Socket ────────────────────────────────────────────────────────────────────
 socket.on("connect", () => {
-  addSystem("Connected. Joining room…");
+  addSystem("Conectando à sala…");
   socket.emit("join-room", roomId);
 });
 
-socket.on("connect_error", (err) => addSystem("Connection error: " + err.message));
+socket.on("connect_error", (err) => addSystem("Erro de conexão: " + err.message));
 
 socket.on("room-info", (info) => {
   myId   = info.yourId;
   isHost = info.isHost;
-  addSystem(`Room ready. Type: ${info.type} | ${isHost ? "Você é o host" : "Você é viewer"}`);
+  addSystem(`Sala pronta · ${isHost ? "Você é o host" : "Você é viewer"}`);
   setupMedia(info.type, info.media);
 });
 
-socket.on("room-error", (msg) => showError(msg));
-
-socket.on("host-left", () => {
-  // Show overlay then redirect to home after 4 seconds
+socket.on("room-error",  (msg) => showError(msg));
+socket.on("host-left",   () => {
   errorText.textContent = "O host encerrou a sessão. Esta sala foi fechada.";
   errorOverlay.style.display = "flex";
   setTimeout(() => { window.location.href = "/"; }, 4000);
 });
-
 socket.on("chat-message", addMessage);
-
-socket.on("user-joined", () => { updateCount(1); addSystem("A user joined."); });
-socket.on("user-left",   () => { updateCount(-1); addSystem("A user left."); });
+socket.on("user-joined", () => { updateCount(1);  addSystem("Um usuário entrou."); });
+socket.on("user-left",   () => { updateCount(-1); addSystem("Um usuário saiu."); });
 
 function updateCount(delta) {
   onlineCount = Math.max(1, onlineCount + delta);
   userCountEl.textContent = `${onlineCount} online`;
 }
 
-// ── Media setup ───────────────────────────────────────────────────────────────
+// ── Media router ──────────────────────────────────────────────────────────────
 function setupMedia(type, media) {
-  if (type === "movie" || type === "serie") {
-    // Everyone loads Pomfy — host gets sync controls overlay
-    setupPomfy(media.url);
-    if (isHost) setupPomfySyncHost();
-    else        setupPomfySyncViewer();
-  } else if (type === "youtube") {
-    setupYouTube(media.videoId);
-  } else if (type === "screenshare") {
-    if (isHost) setupScreenshare();
-    else        setupRTCViewer();
+  if (type === "movie" || type === "serie") setupHLS(type, media);
+  else if (type === "youtube")             setupYouTube(media.videoId);
+  else if (type === "screenshare")         isHost ? setupScreenshare() : setupRTCViewer();
+}
+
+// ── HLS Player (movie / serie via TMDB-Embed-API) ─────────────────────────────
+let hlsVideo = null;
+let suppressVideoEvents = false;
+
+async function setupHLS(type, media) {
+  // Loading state
+  const loading = showLoadingOverlay("🔍 Buscando streams…");
+
+  let streams;
+  try {
+    const res = await fetch(`/api/streams/${roomId}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    streams = await res.json();
+  } catch (err) {
+    loading.remove();
+    showNoStreamsOverlay(media);
+    addSystem("Erro ao buscar streams: " + err.message);
+    return;
+  }
+
+  if (!streams || streams.length === 0) {
+    loading.remove();
+    showNoStreamsOverlay(media);
+    addSystem("Nenhum stream encontrado para este título.");
+    return;
+  }
+
+  loading.remove();
+
+  // Build video element
+  const video = document.createElement("video");
+  video.id = "hls-video";
+  video.controls = true;
+  video.style.cssText = "width:100%;height:100%;background:#000;display:block;";
+  mediaEl.appendChild(video);
+  hlsVideo = video;
+
+  // Quality selector overlay
+  buildQualityBar(streams, video, media);
+
+  // Load best stream
+  loadStream(streams[0], video);
+
+  // Sync controls (host broadcasts, viewers follow)
+  setupVideoSync(video);
+
+  // Subtitles
+  if (streams[0]?.subtitles?.length) {
+    attachSubtitles(video, streams[0].subtitles);
   }
 }
 
-// ── Pomfy ─────────────────────────────────────────────────────────────────────
-function setupPomfy(url) {
-  const loading = document.createElement("div");
-  loading.id = "pomfy-loading";
-  loading.style.cssText = "color:#8b8ba0;font-size:14px;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;";
-  loading.innerHTML = "⏳ Carregando player…<br><small>Aguarde alguns segundos</small>";
-  mediaEl.appendChild(loading);
+function loadStream(stream, video) {
+  addSystem(`Carregando: ${stream.title || stream.quality || "stream"}`);
 
-  const iframe = document.createElement("iframe");
-  iframe.src = url;
-  iframe.allowFullscreen = true;
-  iframe.allow = "fullscreen; autoplay; encrypted-media; picture-in-picture";
-  iframe.referrerPolicy = "no-referrer-when-downgrade";
-  iframe.style.cssText = "width:100%;height:100%;border:none;position:relative;z-index:1;";
-
-  // Remove loading on first load event
-  iframe.addEventListener("load", () => loading.remove(), { once: true });
-
-  // Fallback: if still loading after 10s, show open-in-tab option
-  const timer = setTimeout(() => {
-    if (document.getElementById("pomfy-loading")) {
-      loading.remove();
-      showPomfyFallback(url);
+  if (stream.url.includes(".m3u8")) {
+    // HLS stream — use HLS.js if browser doesn't support natively
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = stream.url;
+    } else if (window.Hls && Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true });
+      hls.loadSource(stream.url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) addSystem("HLS error: " + data.type);
+      });
+      video._hls = hls;
+    } else {
+      addSystem("Seu browser não suporta HLS. Tente Chrome/Firefox.");
     }
-  }, 10000);
-
-  iframe.addEventListener("load", () => clearTimeout(timer), { once: true });
-  mediaEl.appendChild(iframe);
+  } else {
+    // Direct MP4
+    video.src = stream.url;
+  }
 }
 
-function showPomfyFallback(url) {
-  mediaEl.innerHTML = `
-    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:24px;max-width:440px;">
-      <div style="font-size:48px;margin-bottom:16px">🎬</div>
-      <p style="color:#e8e8f0;font-size:16px;margin-bottom:8px;line-height:1.5;">
-        O player não carregou dentro da página.<br>
-        O site de streaming bloqueia incorporação.
-      </p>
-      <p style="color:#8b8ba0;font-size:13px;margin-bottom:20px;">
-        Abra o player numa aba nova e use o chat aqui para sincronizar com seus amigos.
-      </p>
-      <a href="${url}" target="_blank" rel="noopener"
-         style="display:inline-block;padding:12px 28px;background:#5865f2;color:#fff;border-radius:8px;text-decoration:none;font-size:15px;font-weight:600;">
-        Abrir Player ↗
-      </a>
-    </div>`;
-}
-
-// ── Pomfy sync overlay ────────────────────────────────────────────────────────
-// Since Pomfy doesn't expose postMessage events and redirects to external
-// providers, we give the HOST a manual sync control bar. The host sets the
-// current time; viewers receive it and click "Sync" to jump to that time.
-// This works because everyone has Pomfy open independently (best quality,
-// own server choice) and the overlay keeps them in sync.
-
-let pomfyTime = 0; // seconds tracked by host via a running timer
-
-function makeBtn(label, color) {
-  const b = document.createElement("button");
-  b.textContent = label;
-  b.style.cssText = `padding:6px 14px;background:${color};color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;`;
-  return b;
-}
-
-function setupPomfySyncHost() {
-  // Build the host control bar
+function buildQualityBar(streams, video, media) {
   const bar = document.createElement("div");
-  bar.id = "sync-bar";
   bar.style.cssText = `
-    position:absolute;bottom:0;left:0;right:0;z-index:20;
-    background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);
-    display:flex;align-items:center;gap:10px;padding:10px 16px;
-    font-size:14px;color:#fff;
+    position:absolute;top:0;right:0;z-index:20;
+    background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);
+    padding:6px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+    font-size:12px;color:#fff;max-width:60%;
   `;
 
-  const timeDisplay = document.createElement("span");
-  timeDisplay.id = "sync-time";
-  timeDisplay.style.cssText = "font-variant-numeric:tabular-nums;min-width:70px;";
-  timeDisplay.textContent = "0:00:00";
+  const label = document.createElement("span");
+  label.textContent = `${media.title}${media.season ? ` S${media.season}E${media.episode}` : ""} · `;
+  label.style.opacity = "0.7";
+  bar.appendChild(label);
 
-  const seekInput = document.createElement("input");
-  seekInput.type = "range";
-  seekInput.min = 0;
-  seekInput.max = 18000; // 5 hours max
-  seekInput.value = 0;
-  seekInput.style.cssText = "flex:1;accent-color:#5865f2;";
-
-  const playBtn  = makeBtn("▶ Play",   "#2ecc71");
-  const pauseBtn = makeBtn("⏸ Pause",  "#e67e22");
-  const syncBtn  = makeBtn("📡 Sync agora", "#5865f2");
-
-  // Host manually updates the slider to match what they're watching
-  seekInput.addEventListener("input", () => {
-    pomfyTime = parseInt(seekInput.value, 10);
-    timeDisplay.textContent = formatTime(pomfyTime);
+  streams.forEach((s, i) => {
+    const btn = document.createElement("button");
+    btn.textContent = s.quality || `#${i+1}`;
+    btn.style.cssText = `padding:3px 8px;border:1px solid #555;background:${i===0?"#5865f2":"transparent"};color:#fff;border-radius:4px;cursor:pointer;font-size:11px;`;
+    btn.addEventListener("click", () => {
+      // Destroy old HLS instance if any
+      if (video._hls) { video._hls.destroy(); video._hls = null; }
+      loadStream(s, video);
+      bar.querySelectorAll("button").forEach(b => b.style.background = "transparent");
+      btn.style.background = "#5865f2";
+    });
+    bar.appendChild(btn);
   });
-
-  // Running clock — host increments if playing
-  let playing = false;
-  const clock = setInterval(() => {
-    if (!playing) return;
-    pomfyTime++;
-    seekInput.value = pomfyTime;
-    timeDisplay.textContent = formatTime(pomfyTime);
-  }, 1000);
-
-  playBtn.addEventListener("click", () => {
-    playing = true;
-    socket.emit("pomfy-sync", { action: "play", time: pomfyTime });
-    addSystem(`▶ Play enviado para viewers (${formatTime(pomfyTime)})`);
-  });
-
-  pauseBtn.addEventListener("click", () => {
-    playing = false;
-    socket.emit("pomfy-sync", { action: "pause", time: pomfyTime });
-    addSystem(`⏸ Pause enviado para viewers (${formatTime(pomfyTime)})`);
-  });
-
-  syncBtn.addEventListener("click", () => {
-    socket.emit("pomfy-sync", { action: "sync", time: pomfyTime });
-    addSystem(`📡 Sync enviado: ${formatTime(pomfyTime)}`);
-  });
-
-  bar.appendChild(timeDisplay);
-  bar.appendChild(seekInput);
-  bar.appendChild(playBtn);
-  bar.appendChild(pauseBtn);
-  bar.appendChild(syncBtn);
-  bar.appendChild(document.createTextNode(" ← Controles do Host"));
 
   mediaEl.style.position = "relative";
   mediaEl.appendChild(bar);
-  addSystem("Você é o host. Use a barra abaixo para sincronizar os viewers.");
 }
 
-function setupPomfySyncViewer() {
-  // Viewer receives sync commands and shows a non-intrusive banner
-  socket.on("pomfy-sync", ({ action, time }) => {
-    const t = formatTime(time);
-    showSyncBanner(action, time, t);
+function showLoadingOverlay(msg) {
+  const el = document.createElement("div");
+  el.style.cssText = `
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    color:#8b8ba0;font-size:16px;text-align:center;z-index:5;
+  `;
+  el.textContent = msg;
+  mediaEl.style.position = "relative";
+  mediaEl.appendChild(el);
+  return el;
+}
+
+function showNoStreamsOverlay(media) {
+  mediaEl.innerHTML = `
+    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+      text-align:center;padding:24px;max-width:420px;">
+      <div style="font-size:48px;margin-bottom:12px">😞</div>
+      <p style="color:#e8e8f0;font-size:16px;margin-bottom:6px;">
+        Nenhum stream disponível para<br><strong>${media.title || "este título"}</strong>
+      </p>
+      <p style="color:#8b8ba0;font-size:13px;">
+        Verifique se o serviço TMDB-Embed-API está rodando e acessível (EMBED_API_URL no Render).
+      </p>
+    </div>`;
+}
+
+function attachSubtitles(video, subtitles) {
+  subtitles.forEach((sub) => {
+    const track = document.createElement("track");
+    track.kind = "subtitles";
+    track.label = sub.lang || "Subtitle";
+    track.srclang = sub.lang?.slice(0,2).toLowerCase() || "pt";
+    track.src = `/api/sub-proxy?url=${encodeURIComponent(sub.url)}`; // proxy for CORS
+    if (/portugu|pt|br/i.test(sub.lang || "")) track.default = true;
+    video.appendChild(track);
   });
-  addSystem("Viewer: aguardando sincronização do host.");
 }
 
-function showSyncBanner(action, time, timeStr) {
-  let banner = document.getElementById("sync-banner");
-  if (!banner) {
-    banner = document.createElement("div");
-    banner.id = "sync-banner";
-    banner.style.cssText = `
-      position:absolute;bottom:0;left:0;right:0;z-index:20;
-      background:rgba(0,0,0,0.85);backdrop-filter:blur(6px);
-      display:flex;align-items:center;justify-content:space-between;
-      padding:12px 20px;font-size:14px;color:#fff;
-    `;
-    mediaEl.style.position = "relative";
-    mediaEl.appendChild(banner);
+// ── Video Sync (host → viewers) ───────────────────────────────────────────────
+function setupVideoSync(video) {
+  if (!video) return;
+
+  if (isHost) {
+    // Host broadcasts play/pause/seek
+    video.addEventListener("play",   () => {
+      if (suppressVideoEvents) return;
+      socket.emit("video-sync", { action: "play", time: video.currentTime });
+    });
+    video.addEventListener("pause",  () => {
+      if (suppressVideoEvents) return;
+      socket.emit("video-sync", { action: "pause", time: video.currentTime });
+    });
+    video.addEventListener("seeked", () => {
+      if (suppressVideoEvents) return;
+      socket.emit("video-sync", { action: "seek", time: video.currentTime });
+    });
+    addSystem("Host: seus controles de play/pause/seek são sincronizados.");
   }
 
-  const icons   = { play: "▶", pause: "⏸", sync: "📡" };
-  const labels  = { play: "Play", pause: "Pause", sync: "Sync" };
-  const icon    = icons[action]  || "📡";
-  const label   = labels[action] || "Sync";
-
-  banner.innerHTML = `
-    <span>${icon} Host: <strong>${label}</strong> em <strong>${timeStr}</strong></span>
-    <button id="do-sync-btn" style="
-      padding:8px 18px;background:#5865f2;color:#fff;border:none;
-      border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;
-    ">Ir para ${timeStr} no meu player</button>
-  `;
-
-  document.getElementById("do-sync-btn").addEventListener("click", () => {
-    // Copy the time to clipboard so the viewer can paste in Pomfy's seek bar
-    // (We can't control the Pomfy iframe directly — different origin)
-    const mins = Math.floor(time / 60);
-    const secs = time % 60;
-    navigator.clipboard?.writeText(`${mins}:${String(secs).padStart(2,"0")}`).catch(()=>{});
-    addSystem(`Vá para ${timeStr} no seu player Pomfy.`);
-    banner.innerHTML = `<span>✅ Tempo copiado: <strong>${timeStr}</strong> — cole na barra de tempo do Pomfy</span>`;
-    setTimeout(() => banner.remove(), 5000);
+  // All clients receive sync events
+  socket.on("video-sync", ({ action, time }) => {
+    if (!video) return;
+    suppressVideoEvents = true;
+    video.currentTime = time;
+    if (action === "play")  video.play().catch(() => {});
+    if (action === "pause") video.pause();
+    setTimeout(() => { suppressVideoEvents = false; }, 500);
+    if (!isHost) addSystem(`Sync: ${action} em ${formatTime(Math.floor(time))}`);
   });
-
-  // Auto-hide after 15s if not clicked
-  clearTimeout(banner._hideTimer);
-  banner._hideTimer = setTimeout(() => banner.remove(), 15000);
-}
-
-function formatTime(s) {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
 }
 
 // ── YouTube (IFrame API + sync) ───────────────────────────────────────────────
@@ -300,13 +272,11 @@ let ytReady    = false;
 let suppressYT = false;
 
 function setupYouTube(videoId) {
-  // Create a div placeholder that YT replaces with the iframe
   const placeholder = document.createElement("div");
   placeholder.id = "yt-player";
   placeholder.style.cssText = "width:100%;height:100%;";
   mediaEl.appendChild(placeholder);
 
-  // Load YT IFrame API
   const tag = document.createElement("script");
   tag.src = "https://www.youtube.com/iframe_api";
   document.head.appendChild(tag);
@@ -314,14 +284,10 @@ function setupYouTube(videoId) {
   window.onYouTubeIframeAPIReady = () => {
     ytPlayer = new YT.Player("yt-player", {
       videoId,
-      width:  "100%",
-      height: "100%",
+      width: "100%", height: "100%",
       playerVars: { autoplay: 0, rel: 0, modestbranding: 1 },
       events: {
-        onReady() {
-          ytReady = true;
-          addSystem("YouTube player pronto. Sincronização ativa.");
-        },
+        onReady() { ytReady = true; addSystem("YouTube pronto. Sync ativo."); },
         onStateChange(e) {
           if (suppressYT || !ytReady) return;
           const t = ytPlayer.getCurrentTime();
@@ -345,65 +311,29 @@ function setupYouTube(videoId) {
 // ── WebRTC Screen Share ───────────────────────────────────────────────────────
 let localStream = null;
 const peers = {};
-let rtcSetup = false; // guard against double-setup
+let rtcSetup = false;
 const ICE = { iceServers: [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ] };
 
-// HOST path: called for screenshare rooms (viewer clicks Start Share button)
 function setupScreenshare() {
-  if (rtcSetup) return;
-  rtcSetup = true;
+  if (rtcSetup) return; rtcSetup = true;
   setupRTCSignaling();
   shareBtn.style.display = "block";
   shareBtn.addEventListener("click", startShare);
 }
 
-// HOST path: called for movie/serie rooms (auto-share Pomfy panel)
-function setupRTCHost() {
-  if (rtcSetup) return;
-  rtcSetup = true;
-  setupRTCSignaling();
-  // Auto-capture after a delay to let Pomfy iframe fully load
-  setTimeout(async () => {
-    try {
-      localStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 },
-        audio: true,
-      });
-      addSystem("Host: compartilhando tela com viewers. Selecione a aba/janela do player.");
-      localStream.getVideoTracks()[0].onended = () => {
-        localStream = null;
-        addSystem("Compartilhamento encerrado.");
-      };
-    } catch {
-      addSystem("Host: clique em 'Start Share' para transmitir o player para os viewers.");
-      shareBtn.style.display = "block";
-      shareBtn.addEventListener("click", startShare);
-    }
-  }, 2000);
-}
-
-// VIEWER path: receive stream from host
 function setupRTCViewer() {
-  if (rtcSetup) return;
-  rtcSetup = true;
+  if (rtcSetup) return; rtcSetup = true;
   setupRTCSignaling();
   addSystem("Aguardando stream do host…");
-  // Request stream after being fully joined
   setTimeout(() => socket.emit("rtc-request-stream"), 800);
 }
 
-// Shared signaling listeners (used by both host and viewer)
 function setupRTCSignaling() {
-  socket.on("rtc-request-stream", ({ from }) => {
-    if (localStream) sendOffer(from);
-  });
-
-  socket.on("user-joined", ({ socketId }) => {
-    if (localStream) sendOffer(socketId);
-  });
+  socket.on("rtc-request-stream", ({ from }) => { if (localStream) sendOffer(from); });
+  socket.on("user-joined", ({ socketId }) => { if (localStream) sendOffer(socketId); });
 
   socket.on("rtc-offer", async ({ from, sdp }) => {
     addSystem("Recebendo stream…");
@@ -422,8 +352,7 @@ function setupRTCSignaling() {
   socket.on("rtc-ice", async ({ from, candidate }) => {
     const pc = peers[from];
     if (!pc) return;
-    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); }
-    catch { /* late ICE */ }
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch { /* late */ }
   });
 }
 
@@ -432,23 +361,18 @@ async function startShare() {
     localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     const video = document.createElement("video");
     video.id = "screen-video";
-    video.autoplay = true;
-    video.playsInline = true;
-    video.muted = true;
-    video.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;";
+    video.autoplay = true; video.playsInline = true; video.muted = true;
+    video.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
     video.srcObject = localStream;
     mediaEl.appendChild(video);
     shareBtn.style.display = "none";
     addSystem("Compartilhando sua tela.");
     localStream.getVideoTracks()[0].onended = () => {
-      video.remove();
-      localStream = null;
+      video.remove(); localStream = null;
       shareBtn.style.display = "block";
       addSystem("Compartilhamento encerrado.");
     };
-  } catch {
-    addSystem("Permissão de tela negada ou falhou.");
-  }
+  } catch { addSystem("Permissão negada ou falhou."); }
 }
 
 async function sendOffer(peerId) {
@@ -462,65 +386,37 @@ function newPC(peerId, isHost) {
   if (peers[peerId]) { peers[peerId].close(); delete peers[peerId]; }
   const pc = new RTCPeerConnection(ICE);
   peers[peerId] = pc;
-
-  if (isHost && localStream) {
-    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-  }
-
-  pc.onicecandidate = ({ candidate }) => {
-    if (candidate) socket.emit("rtc-ice", { to: peerId, candidate });
-  };
-
+  if (isHost && localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  pc.onicecandidate = ({ candidate }) => { if (candidate) socket.emit("rtc-ice", { to: peerId, candidate }); };
   pc.ontrack = ({ streams }) => {
-    // Remove duplicate handlers — only set up video once
     let v = document.getElementById("screen-video");
     if (v) { v.srcObject = streams[0]; return; }
-
     v = document.createElement("video");
-    v.id = "screen-video";
-    v.autoplay = true;
-    v.playsInline = true;
-    v.muted = true; // must be muted for autoplay policy
+    v.id = "screen-video"; v.autoplay = true; v.playsInline = true; v.muted = true;
     v.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
     v.srcObject = streams[0];
     mediaEl.appendChild(v);
     shareBtn.style.display = "none";
-
-    // Force play — browsers block autoplay on remote streams without user gesture
-    const tryPlay = () => {
-      v.play().catch(() => {
-        // Autoplay blocked: show a click-to-play overlay
-        const overlay = document.createElement("div");
-        overlay.id = "play-overlay";
-        overlay.style.cssText = `
-          position:absolute;inset:0;background:rgba(0,0,0,0.7);
-          display:flex;flex-direction:column;align-items:center;
-          justify-content:center;cursor:pointer;z-index:10;
-        `;
-        overlay.innerHTML = `
-          <div style="font-size:64px">▶</div>
-          <div style="color:#fff;font-size:16px;margin-top:12px;">Clique para ver a tela</div>
-        `;
-        overlay.addEventListener("click", () => {
-          v.play();
-          overlay.remove();
-        });
-        mediaEl.style.position = "relative";
-        mediaEl.appendChild(overlay);
-      });
-    };
-
-    // Try immediately, then again on canplay
+    const tryPlay = () => v.play().catch(() => {
+      const ov = document.createElement("div");
+      ov.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.7);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;z-index:10;";
+      ov.innerHTML = `<div style="font-size:64px">▶</div><div style="color:#fff;margin-top:12px">Clique para ver a tela</div>`;
+      ov.addEventListener("click", () => { v.play(); ov.remove(); });
+      mediaEl.style.position = "relative"; mediaEl.appendChild(ov);
+    });
     tryPlay();
     v.addEventListener("canplay", tryPlay, { once: true });
-
     addSystem("Recebendo tela do host.");
   };
-
   return pc;
 }
 
-// ── Error ─────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatTime(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+}
+
 function showError(msg) {
   errorText.textContent = msg;
   errorOverlay.style.display = "flex";
