@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watch Party Room</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="media-panel">
+      <div id="media-container">
+        <!-- Media injected here: iframe (Pomfy), iframe (YT), or video (WebRTC) -->
+      </div>
+      <button id="start-share-btn" style="display:none">Start Screen Share</button>
+    </div>
+
+    <div id="chat-panel">
+      <div id="chat-header">
+        <h2>Watch Party Chat</h2>
+        <span id="user-count">0 online</span>
+      </div>
+      <div id="chat-messages"></div>
+      <form id="chat-form" autocomplete="off">
+        <input id="chat-input" placeholder="Type a message…" maxlength="500">
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="error-overlay">
+    <div id="error-box">
+      <h1>Room Unavailable</h1>
+      <p id="error-text">This room does not exist or has expired.</p>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/room.js"></script>
+</body>
+</html>
