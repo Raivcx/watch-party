@@ -15,7 +15,8 @@ const shareBtn     = document.getElementById("start-share-btn");
 const errorOverlay = document.getElementById("error-overlay");
 const errorText    = document.getElementById("error-text");
 
-let myId = null;
+let myId   = null;
+let isHost = false;
 let onlineCount = 1;
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -58,8 +59,9 @@ socket.on("connect", () => {
 socket.on("connect_error", (err) => addSystem("Connection error: " + err.message));
 
 socket.on("room-info", (info) => {
-  myId = info.yourId;
-  addSystem(`Room ready. Type: ${info.type}`);
+  myId   = info.yourId;
+  isHost = info.isHost;
+  addSystem(`Room ready. Type: ${info.type} | ${isHost ? "Você é o host" : "Você é viewer"}`);
   setupMedia(info.type, info.media);
 });
 
@@ -77,9 +79,24 @@ function updateCount(delta) {
 
 // ── Media setup ───────────────────────────────────────────────────────────────
 function setupMedia(type, media) {
-  if      (type === "movie" || type === "serie") setupPomfy(media.url);
-  else if (type === "youtube")                   setupYouTube(media.videoId);
-  else if (type === "screenshare")               setupScreenshare();
+  if (type === "movie" || type === "serie") {
+    if (isHost) {
+      // Host loads Pomfy, selects server, and streams their screen to viewers
+      setupPomfy(media.url);
+      setupRTCHost(); // auto-start streaming the panel to viewers
+    } else {
+      // Viewers receive the host's screen via WebRTC — no Pomfy iframe
+      setupRTCViewer();
+    }
+  } else if (type === "youtube") {
+    setupYouTube(media.videoId);
+  } else if (type === "screenshare") {
+    if (isHost) {
+      setupScreenshare();
+    } else {
+      setupRTCViewer();
+    }
+  }
 }
 
 // ── Pomfy ─────────────────────────────────────────────────────────────────────
@@ -187,34 +204,60 @@ const ICE = { iceServers: [
   { urls: "stun:stun1.l.google.com:19302" },
 ] };
 
+// HOST path: called for screenshare rooms (viewer clicks Start Share button)
 function setupScreenshare() {
   if (rtcSetup) return;
   rtcSetup = true;
-
+  setupRTCSignaling();
   shareBtn.style.display = "block";
   shareBtn.addEventListener("click", startShare);
+}
 
-  // Viewer requests stream AFTER room-info confirms we're fully joined.
-  // Small delay lets the host process our user-joined event first.
+// HOST path: called for movie/serie rooms (auto-share Pomfy panel)
+function setupRTCHost() {
+  if (rtcSetup) return;
+  rtcSetup = true;
+  setupRTCSignaling();
+  // Auto-capture after a delay to let Pomfy iframe fully load
+  setTimeout(async () => {
+    try {
+      localStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: true,
+      });
+      addSystem("Host: compartilhando tela com viewers. Selecione a aba/janela do player.");
+      localStream.getVideoTracks()[0].onended = () => {
+        localStream = null;
+        addSystem("Compartilhamento encerrado.");
+      };
+    } catch {
+      addSystem("Host: clique em 'Start Share' para transmitir o player para os viewers.");
+      shareBtn.style.display = "block";
+      shareBtn.addEventListener("click", startShare);
+    }
+  }, 2000);
+}
+
+// VIEWER path: receive stream from host
+function setupRTCViewer() {
+  if (rtcSetup) return;
+  rtcSetup = true;
+  setupRTCSignaling();
+  addSystem("Aguardando stream do host…");
+  // Request stream after being fully joined
   setTimeout(() => socket.emit("rtc-request-stream"), 800);
+}
 
-  // Host receives a stream request from a viewer
+// Shared signaling listeners (used by both host and viewer)
+function setupRTCSignaling() {
   socket.on("rtc-request-stream", ({ from }) => {
-    if (localStream) {
-      addSystem(`Enviando stream para ${from.slice(0,6)}…`);
-      sendOffer(from);
-    }
+    if (localStream) sendOffer(from);
   });
 
-  // Host receives a new user: send them the stream if sharing
   socket.on("user-joined", ({ socketId }) => {
-    if (localStream) {
-      addSystem(`Novo usuário entrou — enviando stream…`);
-      sendOffer(socketId);
-    }
+    if (localStream) sendOffer(socketId);
   });
 
-  // Viewer receives offer from host
   socket.on("rtc-offer", async ({ from, sdp }) => {
     addSystem("Recebendo stream…");
     const pc = newPC(from, false);

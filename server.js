@@ -58,7 +58,11 @@ io.on("connection", (socket) => {
       type: room.type,
       media: room.media,
       yourId: socket.id,
+      hostUserId: room.hostSocketId || null, // set when host joins
+      isHost: room.hostSocketId === socket.id || !room.hostSocketId,
     });
+    // First joiner becomes the host socket
+    if (!room.hostSocketId) room.hostSocketId = socket.id;
     console.log(`[socket] room-info sent to ${socket.id}: type=${room.type}`);
   });
 
@@ -90,7 +94,10 @@ io.on("connection", (socket) => {
     console.log(`[socket] disconnected: ${socket.id}`);
     if (currentRoomId) {
       const room = getRoom(currentRoomId);
-      if (room) room.userCount = Math.max(0, room.userCount - 1);
+      if (room) {
+        room.userCount = Math.max(0, room.userCount - 1);
+        if (room.hostSocketId === socket.id) room.hostSocketId = null;
+      }
       socket.to(currentRoomId).emit("user-left", { socketId: socket.id });
     }
   });
