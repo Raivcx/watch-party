@@ -23,21 +23,28 @@ const client = new Client({
 const PUBLIC_URL = process.env.PUBLIC_URL || "http://localhost:3000";
 
 // Auto-register slash commands on startup (no shell access needed on Render free).
+// Uses guild commands (per-server) instead of global — guild commands appear
+// instantly in Discord, while global commands can take up to 1 hour.
 client.once(Events.ClientReady, async (c) => {
   console.log(`Discord bot online as ${c.user.tag}`);
   try {
     const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
-    await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: commands },
-    );
-    console.log("Slash commands registered automatically.");
+    const guilds = c.guilds.cache;
+    for (const [guildId, guild] of guilds) {
+      await rest.put(
+        Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId),
+        { body: commands },
+      );
+      console.log(`Commands registered in guild: ${guild.name} (${guildId})`);
+    }
+    console.log(`Slash commands registered in ${guilds.size} guild(s).`);
   } catch (err) {
     console.error("Failed to auto-register commands:", err);
   }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  console.log(`Interaction received: type=${interaction.type} command=${interaction.commandName || "N/A"}`);
   if (!interaction.isChatInputCommand()) return;
 
   try {
