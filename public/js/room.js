@@ -87,22 +87,15 @@ function updateCount(delta) {
 // ── Media setup ───────────────────────────────────────────────────────────────
 function setupMedia(type, media) {
   if (type === "movie" || type === "serie") {
-    if (isHost) {
-      // Host loads Pomfy, selects server, and streams their screen to viewers
-      setupPomfy(media.url);
-      setupRTCHost(); // auto-start streaming the panel to viewers
-    } else {
-      // Viewers receive the host's screen via WebRTC — no Pomfy iframe
-      setupRTCViewer();
-    }
+    // Everyone loads Pomfy — host gets sync controls overlay
+    setupPomfy(media.url);
+    if (isHost) setupPomfySyncHost();
+    else        setupPomfySyncViewer();
   } else if (type === "youtube") {
     setupYouTube(media.videoId);
   } else if (type === "screenshare") {
-    if (isHost) {
-      setupScreenshare();
-    } else {
-      setupRTCViewer();
-    }
+    if (isHost) setupScreenshare();
+    else        setupRTCViewer();
   }
 }
 
@@ -152,6 +145,153 @@ function showPomfyFallback(url) {
         Abrir Player ↗
       </a>
     </div>`;
+}
+
+// ── Pomfy sync overlay ────────────────────────────────────────────────────────
+// Since Pomfy doesn't expose postMessage events and redirects to external
+// providers, we give the HOST a manual sync control bar. The host sets the
+// current time; viewers receive it and click "Sync" to jump to that time.
+// This works because everyone has Pomfy open independently (best quality,
+// own server choice) and the overlay keeps them in sync.
+
+let pomfyTime = 0; // seconds tracked by host via a running timer
+
+function makeBtn(label, color) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.style.cssText = `padding:6px 14px;background:${color};color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap;`;
+  return b;
+}
+
+function setupPomfySyncHost() {
+  // Build the host control bar
+  const bar = document.createElement("div");
+  bar.id = "sync-bar";
+  bar.style.cssText = `
+    position:absolute;bottom:0;left:0;right:0;z-index:20;
+    background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);
+    display:flex;align-items:center;gap:10px;padding:10px 16px;
+    font-size:14px;color:#fff;
+  `;
+
+  const timeDisplay = document.createElement("span");
+  timeDisplay.id = "sync-time";
+  timeDisplay.style.cssText = "font-variant-numeric:tabular-nums;min-width:70px;";
+  timeDisplay.textContent = "0:00:00";
+
+  const seekInput = document.createElement("input");
+  seekInput.type = "range";
+  seekInput.min = 0;
+  seekInput.max = 18000; // 5 hours max
+  seekInput.value = 0;
+  seekInput.style.cssText = "flex:1;accent-color:#5865f2;";
+
+  const playBtn  = makeBtn("▶ Play",   "#2ecc71");
+  const pauseBtn = makeBtn("⏸ Pause",  "#e67e22");
+  const syncBtn  = makeBtn("📡 Sync agora", "#5865f2");
+
+  // Host manually updates the slider to match what they're watching
+  seekInput.addEventListener("input", () => {
+    pomfyTime = parseInt(seekInput.value, 10);
+    timeDisplay.textContent = formatTime(pomfyTime);
+  });
+
+  // Running clock — host increments if playing
+  let playing = false;
+  const clock = setInterval(() => {
+    if (!playing) return;
+    pomfyTime++;
+    seekInput.value = pomfyTime;
+    timeDisplay.textContent = formatTime(pomfyTime);
+  }, 1000);
+
+  playBtn.addEventListener("click", () => {
+    playing = true;
+    socket.emit("pomfy-sync", { action: "play", time: pomfyTime });
+    addSystem(`▶ Play enviado para viewers (${formatTime(pomfyTime)})`);
+  });
+
+  pauseBtn.addEventListener("click", () => {
+    playing = false;
+    socket.emit("pomfy-sync", { action: "pause", time: pomfyTime });
+    addSystem(`⏸ Pause enviado para viewers (${formatTime(pomfyTime)})`);
+  });
+
+  syncBtn.addEventListener("click", () => {
+    socket.emit("pomfy-sync", { action: "sync", time: pomfyTime });
+    addSystem(`📡 Sync enviado: ${formatTime(pomfyTime)}`);
+  });
+
+  bar.appendChild(timeDisplay);
+  bar.appendChild(seekInput);
+  bar.appendChild(playBtn);
+  bar.appendChild(pauseBtn);
+  bar.appendChild(syncBtn);
+  bar.appendChild(document.createTextNode(" ← Controles do Host"));
+
+  mediaEl.style.position = "relative";
+  mediaEl.appendChild(bar);
+  addSystem("Você é o host. Use a barra abaixo para sincronizar os viewers.");
+}
+
+function setupPomfySyncViewer() {
+  // Viewer receives sync commands and shows a non-intrusive banner
+  socket.on("pomfy-sync", ({ action, time }) => {
+    const t = formatTime(time);
+    showSyncBanner(action, time, t);
+  });
+  addSystem("Viewer: aguardando sincronização do host.");
+}
+
+function showSyncBanner(action, time, timeStr) {
+  let banner = document.getElementById("sync-banner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "sync-banner";
+    banner.style.cssText = `
+      position:absolute;bottom:0;left:0;right:0;z-index:20;
+      background:rgba(0,0,0,0.85);backdrop-filter:blur(6px);
+      display:flex;align-items:center;justify-content:space-between;
+      padding:12px 20px;font-size:14px;color:#fff;
+    `;
+    mediaEl.style.position = "relative";
+    mediaEl.appendChild(banner);
+  }
+
+  const icons   = { play: "▶", pause: "⏸", sync: "📡" };
+  const labels  = { play: "Play", pause: "Pause", sync: "Sync" };
+  const icon    = icons[action]  || "📡";
+  const label   = labels[action] || "Sync";
+
+  banner.innerHTML = `
+    <span>${icon} Host: <strong>${label}</strong> em <strong>${timeStr}</strong></span>
+    <button id="do-sync-btn" style="
+      padding:8px 18px;background:#5865f2;color:#fff;border:none;
+      border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;
+    ">Ir para ${timeStr} no meu player</button>
+  `;
+
+  document.getElementById("do-sync-btn").addEventListener("click", () => {
+    // Copy the time to clipboard so the viewer can paste in Pomfy's seek bar
+    // (We can't control the Pomfy iframe directly — different origin)
+    const mins = Math.floor(time / 60);
+    const secs = time % 60;
+    navigator.clipboard?.writeText(`${mins}:${String(secs).padStart(2,"0")}`).catch(()=>{});
+    addSystem(`Vá para ${timeStr} no seu player Pomfy.`);
+    banner.innerHTML = `<span>✅ Tempo copiado: <strong>${timeStr}</strong> — cole na barra de tempo do Pomfy</span>`;
+    setTimeout(() => banner.remove(), 5000);
+  });
+
+  // Auto-hide after 15s if not clicked
+  clearTimeout(banner._hideTimer);
+  banner._hideTimer = setTimeout(() => banner.remove(), 15000);
+}
+
+function formatTime(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
 }
 
 // ── YouTube (IFrame API + sync) ───────────────────────────────────────────────

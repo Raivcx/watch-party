@@ -82,6 +82,14 @@ io.on("connection", (socket) => {
     socket.to(currentRoomId).emit("yt-action", { action, time, from: socket.id });
   });
 
+  // Pomfy manual sync (host → viewers)
+  socket.on("pomfy-sync", ({ action, time }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room || room.hostSocketId !== socket.id) return; // only host can sync
+    socket.to(currentRoomId).emit("pomfy-sync", { action, time });
+  });
+
   // WebRTC signaling
   socket.on("rtc-offer",  ({ to, sdp })       => io.to(to).emit("rtc-offer",  { from: socket.id, sdp }));
   socket.on("rtc-answer", ({ to, sdp })       => io.to(to).emit("rtc-answer", { from: socket.id, sdp }));
