@@ -3,7 +3,8 @@ import "dotenv/config";
 import {
   Client,
   GatewayIntentBits,
-  SlashCommandBuilder,
+  REST,
+  Routes,
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
@@ -13,6 +14,7 @@ import {
 import { searchTitle, getShowInfo } from "../lib/tmdb.js";
 import { extractYouTubeId } from "../lib/youtube.js";
 import { createRoom } from "../lib/roomStore.js";
+import { commands } from "./commands.js";
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -20,8 +22,19 @@ const client = new Client({
 
 const PUBLIC_URL = process.env.PUBLIC_URL || "http://localhost:3000";
 
-client.once(Events.ClientReady, (c) => {
+// Auto-register slash commands on startup (no shell access needed on Render free).
+client.once(Events.ClientReady, async (c) => {
   console.log(`Discord bot online as ${c.user.tag}`);
+  try {
+    const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: commands },
+    );
+    console.log("Slash commands registered automatically.");
+  } catch (err) {
+    console.error("Failed to auto-register commands:", err);
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {

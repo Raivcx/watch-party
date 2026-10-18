@@ -82,17 +82,17 @@ After the first deploy, Render assigns a URL like `https://watch-party-xxxx.onre
 
 ---
 
-## Step 5 — Register Slash Commands (One-Time)
+## Step 5 — Slash Commands (Automatic)
 
-Run the deploy command on Render's shell:
-1. Render dashboard → your service → **Shell** tab.
-2. Run:
-   ```bash
-   npm run deploy-commands
-   ```
-3. You should see: `Successfully registered commands.`
+Slash commands are **auto-registered on startup** — no shell access needed.
 
-Now go to Discord and try `/watch movie Inception`.
+When the bot starts, it calls Discord's API to register `/watch`, `/yt`, and `/screenshare`. You'll see `Slash commands registered automatically.` in the Render logs.
+
+After your first deploy:
+1. Wait for the server to fully start (check logs for `Discord bot online`).
+2. Go to Discord and try `/watch movie Inception`.
+
+> If commands don't appear, restart the service from the Render dashboard (Manual Deploy → Restart). The auto-registration runs on every startup.
 
 ---
 
