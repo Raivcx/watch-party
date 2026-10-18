@@ -181,12 +181,16 @@ function setupYouTube(videoId) {
 // ── WebRTC Screen Share ───────────────────────────────────────────────────────
 let localStream = null;
 const peers = {};
+let rtcSetup = false; // guard against double-setup
 const ICE = { iceServers: [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ] };
 
 function setupScreenshare() {
+  if (rtcSetup) return;
+  rtcSetup = true;
+
   shareBtn.style.display = "block";
   shareBtn.addEventListener("click", startShare);
 
@@ -278,17 +282,48 @@ function newPC(peerId, isHost) {
   };
 
   pc.ontrack = ({ streams }) => {
+    // Remove duplicate handlers — only set up video once
     let v = document.getElementById("screen-video");
-    if (!v) {
-      v = document.createElement("video");
-      v.id = "screen-video";
-      v.autoplay = true;
-      v.playsInline = true;
-      v.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;";
-      mediaEl.appendChild(v);
-      shareBtn.style.display = "none";
-    }
+    if (v) { v.srcObject = streams[0]; return; }
+
+    v = document.createElement("video");
+    v.id = "screen-video";
+    v.autoplay = true;
+    v.playsInline = true;
+    v.muted = true; // must be muted for autoplay policy
+    v.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
     v.srcObject = streams[0];
+    mediaEl.appendChild(v);
+    shareBtn.style.display = "none";
+
+    // Force play — browsers block autoplay on remote streams without user gesture
+    const tryPlay = () => {
+      v.play().catch(() => {
+        // Autoplay blocked: show a click-to-play overlay
+        const overlay = document.createElement("div");
+        overlay.id = "play-overlay";
+        overlay.style.cssText = `
+          position:absolute;inset:0;background:rgba(0,0,0,0.7);
+          display:flex;flex-direction:column;align-items:center;
+          justify-content:center;cursor:pointer;z-index:10;
+        `;
+        overlay.innerHTML = `
+          <div style="font-size:64px">▶</div>
+          <div style="color:#fff;font-size:16px;margin-top:12px;">Clique para ver a tela</div>
+        `;
+        overlay.addEventListener("click", () => {
+          v.play();
+          overlay.remove();
+        });
+        mediaEl.style.position = "relative";
+        mediaEl.appendChild(overlay);
+      });
+    };
+
+    // Try immediately, then again on canplay
+    tryPlay();
+    v.addEventListener("canplay", tryPlay, { once: true });
+
     addSystem("Recebendo tela do host.");
   };
 
