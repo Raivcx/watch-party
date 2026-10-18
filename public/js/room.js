@@ -93,12 +93,63 @@ function setupMedia(type, media) {
 
 // --- Pomfy iframe ---
 function setupPomfy(url) {
+  // Show a loading indicator while the iframe loads
+  const loadMsg = document.createElement("div");
+  loadMsg.id = "pomfy-loading";
+  loadMsg.style.cssText = "color:#8b8ba0;font-size:14px;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)";
+  loadMsg.textContent = "Loading player…";
+  mediaContainer.appendChild(loadMsg);
+
   const iframe = document.createElement("iframe");
   iframe.src = url;
   iframe.allowFullscreen = true;
-  iframe.allow = "fullscreen; autoplay; encrypted-media";
-  iframe.sandbox = "allow-scripts allow-same-origin allow-presentation allow-forms";
+  // Do NOT use sandbox — it blocks the player's own scripts
+  iframe.allow = "fullscreen; autoplay; encrypted-media; picture-in-picture";
+  iframe.referrerPolicy = "no-referrer-when-downgrade";
+  iframe.style.cssText = "width:100%;height:100%;border:none;";
+
+  iframe.addEventListener("load", () => {
+    loadMsg.remove();
+  });
+
+  // If iframe fails (X-Frame-Options block), show a helpful fallback
+  iframe.addEventListener("error", () => {
+    loadMsg.remove();
+    showPomfyFallback(url);
+  });
+
+  // Fallback timer: if iframe stays blank for 8s, suggest opening directly
+  const fallbackTimer = setTimeout(() => {
+    if (document.getElementById("pomfy-loading")) {
+      loadMsg.remove();
+      showPomfyFallback(url);
+    }
+  }, 8000);
+
+  iframe.addEventListener("load", () => clearTimeout(fallbackTimer));
   mediaContainer.appendChild(iframe);
+}
+
+function showPomfyFallback(url) {
+  mediaContainer.innerHTML = `
+    <div style="
+      position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+      text-align:center;padding:24px;max-width:420px;
+    ">
+      <div style="font-size:48px;margin-bottom:16px">🎬</div>
+      <p style="color:#e8e8f0;font-size:16px;margin-bottom:8px">
+        The player couldn't load inside the page.<br>
+        This usually means the streaming site blocks iframes.
+      </p>
+      <p style="color:#8b8ba0;font-size:13px;margin-bottom:20px">
+        Open the player in a new tab and use the chat here to sync with your friends.
+      </p>
+      <a href="${url}" target="_blank" rel="noopener" style="
+        display:inline-block;padding:12px 24px;background:#5865f2;
+        color:#fff;border-radius:8px;text-decoration:none;font-size:15px;
+      ">Open Player ↗</a>
+    </div>
+  `;
 }
 
 // --- YouTube IFrame Player + sync ---

@@ -9,9 +9,12 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   Events,
 } from "discord.js";
-import { searchTitle, getShowInfo } from "../lib/tmdb.js";
+import { searchTitle } from "../lib/tmdb.js";
 import { extractYouTubeId } from "../lib/youtube.js";
 import { createRoom } from "../lib/roomStore.js";
 import { commands } from "./commands.js";
@@ -67,76 +70,106 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 // --- /watch <type> <name> ---
+// For series: show a Discord Modal (popup form) to collect season/episode.
+// Modals don't require any privileged intents, unlike awaitMessages.
 async function handleWatch(interaction) {
   const type = interaction.options.getString("type"); // movie | serie
   const name = interaction.options.getString("name");
 
+  // For series, show a modal BEFORE deferring (modals must be the first response)
+  if (type === "serie") {
+    const modal = new ModalBuilder()
+      .setCustomId(`serie-ep:${name}`)
+      .setTitle("Season & Episode");
+
+    const seasonInput = new TextInputBuilder()
+      .setCustomId("season")
+      .setLabel("Season number")
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder("e.g. 1")
+      .setRequired(true)
+      .setMinLength(1)
+      .setMaxLength(3);
+
+    const episodeInput = new TextInputBuilder()
+      .setCustomId("episode")
+      .setLabel("Episode number")
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder("e.g. 1")
+      .setRequired(true)
+      .setMinLength(1)
+      .setMaxLength(3);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(seasonInput),
+      new ActionRowBuilder().addComponents(episodeInput),
+    );
+
+    await interaction.showModal(modal);
+
+    // Wait for the user to submit the modal (up to 5 minutes)
+    let modalInteraction;
+    try {
+      modalInteraction = await interaction.awaitModalSubmit({
+        filter: (i) => i.customId.startsWith("serie-ep:") && i.user.id === interaction.user.id,
+        time: 5 * 60 * 1000,
+      });
+    } catch {
+      return; // timed out, user dismissed modal
+    }
+
+    // Defer the modal reply while we fetch TMDB
+    await modalInteraction.deferReply();
+
+    const season = parseInt(modalInteraction.fields.getTextInputValue("season"), 10) || 1;
+    const episode = parseInt(modalInteraction.fields.getTextInputValue("episode"), 10) || 1;
+
+    const result = await searchTitle("serie", name);
+    if (!result) {
+      return modalInteraction.editReply(`No results found for "**${name}**".`);
+    }
+
+    const url = `https://api.pomfy.stream/serie/${result.tmdbId}/${season}/${episode}`;
+    const room = createRoom({
+      type: "serie",
+      media: { ...result, url, season, episode },
+      hostUserId: interaction.user.id,
+    });
+
+    const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
+    const embed = new EmbedBuilder()
+      .setTitle(`Watch Party — ${result.title}`)
+      .setDescription(`📺 ${result.title} S${season}E${episode}\n\nClick the button below to join the room.`)
+      .setURL(roomUrl)
+      .setColor(0x5865f2);
+
+    if (result.poster) embed.setThumbnail(result.poster);
+    if (result.overview) embed.addFields({ name: "Overview", value: result.overview.slice(0, 300) });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
+    );
+
+    return modalInteraction.editReply({ embeds: [embed], components: [row] });
+  }
+
+  // Movies: just defer and proceed
   await interaction.deferReply();
 
   const result = await searchTitle(type, name);
   if (!result) {
-    return interaction.editReply(`No results found for "**${name}".`);
+    return interaction.editReply(`No results found for "**${name}**".`);
   }
 
-  // For series, ask for season/episode
-  let season = 1;
-  let episode = 1;
-
-  if (type === "serie") {
-    const show = await getShowInfo(result.tmdbId);
-    const seasonNumbers = show.seasons
-      .filter((s) => s.season_number > 0)
-      .map((s) => s.season_number);
-    if (seasonNumbers.length > 0) {
-      season = seasonNumbers[0];
-    }
-    // Prompt for season/episode
-    await interaction.editReply({
-      content: `Found **${result.title}** (${result.year}).\nReply with \`season episode\` (e.g. \`1 5\`) in the next 60 seconds, or I'll default to S${season}E1.`,
-    });
-
-    try {
-      const collected = await interaction.channel.awaitMessages({
-        filter: (m) => m.author.id === interaction.user.id,
-        max: 1,
-        time: 60_000,
-        errors: ["time"],
-      });
-      const reply = collected.first().content.trim().split(/\s+/);
-      const s = parseInt(reply[0], 10);
-      const e = parseInt(reply[1], 10);
-      if (!isNaN(s) && !isNaN(e)) {
-        season = s;
-        episode = e;
-      }
-    } catch {
-      // timed out — use defaults
-    }
-  }
-
-  let url;
-  if (type === "movie") {
-    url = `https://api.pomfy.stream/filme/${result.tmdbId}`;
-  } else {
-    url = `https://api.pomfy.stream/serie/${result.tmdbId}/${season}/${episode}`;
-  }
-
+  const url = `https://api.pomfy.stream/filme/${result.tmdbId}`;
   const room = createRoom({
-    type,
-    media: {
-      ...result,
-      url,
-      season,
-      episode,
-    },
+    type: "movie",
+    media: { ...result, url },
     hostUserId: interaction.user.id,
   });
 
   const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
-  const mediaLabel =
-    type === "movie"
-      ? `🎬 ${result.title} (${result.year})`
-      : `📺 ${result.title} S${season}E${episode}`;
+  const mediaLabel = `🎬 ${result.title} (${result.year})`;
 
   const embed = new EmbedBuilder()
     .setTitle(`Watch Party — ${result.title}`)
@@ -145,16 +178,10 @@ async function handleWatch(interaction) {
     .setColor(0x5865f2);
 
   if (result.poster) embed.setThumbnail(result.poster);
-  if (result.overview) embed.addFields({
-    name: "Overview",
-    value: result.overview.slice(0, 300) || "No description available.",
-  });
+  if (result.overview) embed.addFields({ name: "Overview", value: result.overview.slice(0, 300) });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setLabel("Join Room")
-      .setStyle(ButtonStyle.Link)
-      .setURL(roomUrl),
+    new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
   );
 
   return interaction.editReply({ embeds: [embed], components: [row] });
