@@ -118,6 +118,14 @@ function initSocket() {
     socket.emit("join-room", roomId);
   });
 
+  // Se o socket já estava conectado antes de initSocket ser chamado
+  // (caso do modal de nome: socket conecta imediatamente mas os listeners
+  // só existem depois que o usuário submete o nome), emite join-room direto.
+  if (socket.connected) {
+    addSystem("Conectando à sala…");
+    socket.emit("join-room", roomId);
+  }
+
   socket.on("connect_error", (err) => addSystem("Erro de conexão: " + err.message));
 
   socket.on("room-info", (info) => {
@@ -140,7 +148,10 @@ function initSocket() {
   socket.on("host-promoted", ({ message }) => {
     isHost = true;
     addSystem(`👑 ${message}`);
-    shareBtn.style.display = "block";
+    // Configura o RTC como host — setupScreenshare tem guard interno (rtcSetup)
+    // para não duplicar listeners caso já tenha sido chamado antes.
+    // Isso também adiciona o click listener no shareBtn.
+    setupScreenshare();
   });
 
   socket.on("host-changed", ({ newHostId, newHostName }) => {
@@ -623,3 +634,4 @@ function showError(msg) {
   errorText.textContent = msg;
   errorOverlay.style.display = "flex";
 }
+
