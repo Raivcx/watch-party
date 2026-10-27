@@ -25,7 +25,6 @@ app.use(express.json());
 app.use(express.static(join(__dirname, "public")));
 
 // Bloqueia abertura de popups e navegação indesejada pelos iframes dos players.
-// allow-popups-to-escape-sandbox é explicitamente omitido.
 app.use((req, res, next) => {
   // Impede que a página seja carregada em iframes de outros sites (clickjacking)
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -33,6 +32,22 @@ app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   // Referrer mínimo — não vaza URL para os players externos
   res.setHeader("Referrer-Policy", "strict-origin");
+  // CSP: a página da sala não pode abrir popups nem ser embedada externamente.
+  // Os iframes dos players são cross-origin e têm CSP próprio —
+  // este header protege apenas o nosso documento raiz.
+  if (req.path.startsWith("/room/") || req.path === "/") {
+    res.setHeader(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com",
+        "frame-src *",                 // permite iframes dos players
+        "connect-src 'self' wss: ws:", // socket.io
+        "img-src 'self' data: https:", // thumbnails
+        "style-src 'self' 'unsafe-inline'",
+      ].join("; ")
+    );
+  }
   next();
 });
 

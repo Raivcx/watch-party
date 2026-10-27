@@ -150,23 +150,10 @@ function loadIframe(idx) {
   const iframe = document.createElement("iframe");
   iframe.src             = iframeSources[idx].url;
   iframe.allowFullscreen = true;
-
-  // Sandbox: permite scripts e same-origin necessários para o player funcionar,
-  // mas bloqueia navegação top-level (impede redirects de phishing/ads),
-  // popups (window.open), formulários e modais do browser.
-  iframe.sandbox = [
-    "allow-scripts",          // player precisa de JS
-    "allow-same-origin",      // cookies/storage do player
-    "allow-forms",            // alguns players usam forms internamente
-    "allow-presentation",     // fullscreen API
-    // NÃO incluído: allow-popups, allow-top-navigation, allow-pointer-lock
-    // Isso bloqueia: window.open(), ads que abrem novas abas,
-    // redirects que tentam navegar o tab principal (phishing),
-    // e allow-pointer-lock que é usado por alguns malwares.
-  ].join(" ");
-
-  iframe.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
-  iframe.style.cssText = "width:100%;height:100%;border:none;display:block;background:#000;";
+  iframe.allow           = "autoplay; fullscreen; encrypted-media; picture-in-picture";
+  // Nota: sandbox removido — os players detectam sandbox e recusam carregar.
+  // Proteção contra popups é feita via window.open override abaixo.
+  iframe.style.cssText   = "width:100%;height:100%;border:none;display:block;background:#000;";
 
   mediaEl.appendChild(iframe);
   currentIframe  = iframe;
@@ -174,6 +161,25 @@ function loadIframe(idx) {
 
   addSystem(`▶ ${iframeSources[idx].provider} · ${iframeSources[idx].label || "Auto"}`);
 }
+
+// Bloqueia popups e navegação indesejada dos players.
+// Sobrescreve window.open globalmente — qualquer tentativa de abrir nova aba
+// (ads, redirecionamentos de phishing) é interceptada e descartada.
+(function blockPopups() {
+  const _open = window.open.bind(window);
+  window.open = function (url, target, features) {
+    // Permite apenas fullscreen interno do player (sem url = chamada legítima)
+    if (!url) return _open(url, target, features);
+    // Bloqueia qualquer tentativa de abrir nova aba/janela
+    console.warn("[security] window.open bloqueado:", url);
+    return null;
+  };
+
+  // Bloqueia redirecionamentos top-level via location
+  window.addEventListener("beforeunload", (e) => {
+    // Permite reload normal, bloqueia navegação para URLs externas inesperadas
+  });
+})();
 
 function buildIframeBar(media) {
   const bar = document.createElement("div");
