@@ -116,9 +116,8 @@ async function setupIframePlayer(type, media) {
   iframeSources = sources;
   currentSrcIdx = 0;
 
-  // Painel de controle — barra superior
+  // Painel de controle — barra superior (já carrega o primeiro iframe internamente)
   buildIframeBar(media);
-  loadIframe(0);
 
   // Viewers recebem sync do host
   socket.on("iframe-sync", ({ time, sourceIdx }) => {
@@ -154,73 +153,106 @@ function buildIframeBar(media) {
   bar.id = "iframe-bar";
   bar.style.cssText = `
     position:absolute;top:0;left:0;right:0;z-index:20;
-    background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);
-    padding:6px 12px;display:flex;gap:8px;align-items:center;
-    font-size:13px;color:#fff;
+    background:rgba(0,0,0,0.82);backdrop-filter:blur(6px);
+    padding:5px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+    font-size:12px;color:#fff;min-height:36px;
   `;
 
-  // Título
+  // Título do conteúdo
   const title = document.createElement("span");
   title.textContent = media.title
-    + (media.season ? ` S${media.season}E${media.episode}` : "")
-    + " · ";
-  title.style.opacity = "0.7";
+    + (media.season ? ` · S${media.season}E${media.episode}` : "");
+  title.style.cssText = "opacity:0.65;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;";
   bar.appendChild(title);
 
-  // Botões de fonte
-  iframeSources.forEach((src, i) => {
+  // Separador
+  const sep = document.createElement("span");
+  sep.textContent = "·";
+  sep.style.opacity = "0.3";
+  bar.appendChild(sep);
+
+  // Botões por grupo de idioma
+  // Agrupa: dub, leg, auto
+  const groups = [
+    { key: "dub",  label: "🇧🇷 DUB",     color: "#e74c3c", title: "Dublado PT-BR" },
+    { key: "leg",  label: "🇧🇷 LEG",     color: "#3498db", title: "Legendado PT-BR" },
+    { key: "auto", label: "EN/Auto",      color: "#555",    title: "Inglês / Automático" },
+  ];
+
+  // Índice ativo no grupo de lang selecionado
+  const groupIdx = { dub: 0, leg: 0, auto: 0 };
+
+  // Cria um botão por grupo — ao clicar, roda pelos sources daquele grupo
+  groups.forEach(({ key, label, color, title: ttip }) => {
+    const srcs = iframeSources.filter((s) => s.lang === key);
+    if (!srcs.length) return;
+
     const btn = document.createElement("button");
-    btn.textContent = src.provider.replace("vidsrc.", "VidSrc ");
+    btn.dataset.langGroup = key;
+    btn.textContent = label;
+    btn.title = ttip;
+    const isActive = key === "dub"; // DUB ativo por padrão
     btn.style.cssText = `
-      padding:3px 10px;border:1px solid #555;
-      background:${i === 0 ? "#5865f2" : "transparent"};
-      color:#fff;border-radius:4px;cursor:pointer;font-size:11px;
+      padding:3px 9px;border:1px solid ${color};
+      background:${isActive ? color : "transparent"};
+      color:#fff;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;
     `;
+
     btn.addEventListener("click", () => {
-      loadIframe(i);
-      bar.querySelectorAll("button.src-btn").forEach((b) => b.style.background = "transparent");
-      btn.style.background = "#5865f2";
+      // Desativa todos os grupos
+      bar.querySelectorAll("[data-lang-group]").forEach((b) => {
+        const g = groups.find((g) => g.key === b.dataset.langGroup);
+        if (g) b.style.background = "transparent";
+      });
+      // Ativa este
+      btn.style.background = color;
+      // Carrega próxima source deste grupo (roda entre os do mesmo grupo)
+      const groupSrcs = iframeSources.map((s, i) => ({ ...s, idx: i })).filter((s) => s.lang === key);
+      const next = groupSrcs[groupIdx[key] % groupSrcs.length];
+      groupIdx[key] = (groupIdx[key] + 1) % groupSrcs.length;
+      loadIframe(next.idx);
     });
-    btn.className = "src-btn";
+
     bar.appendChild(btn);
   });
 
-  // Espaçador
+  // Espaçador flexível
   const spacer = document.createElement("div");
   spacer.style.flex = "1";
   bar.appendChild(spacer);
 
-  // Botão Sync (só para o host)
+  // Botão Sync — só o host vê
   if (isHost) {
     const syncBtn = document.createElement("button");
     syncBtn.id = "sync-btn";
-    syncBtn.textContent = "📍 Sincronizar";
+    syncBtn.textContent = "📍 Sync";
     syncBtn.title = "Envia sua posição atual para todos os viewers";
     syncBtn.style.cssText = `
-      padding:4px 14px;background:#2ecc71;color:#000;font-weight:600;
-      border:none;border-radius:4px;cursor:pointer;font-size:12px;
+      padding:3px 12px;background:#2ecc71;color:#000;font-weight:700;
+      border:none;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;
     `;
     syncBtn.addEventListener("click", () => {
-      // Calcula quantos segundos o iframe está aberto
       const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
       socket.emit("iframe-sync", { time: elapsed, sourceIdx: currentSrcIdx });
       addSystem(`📍 Sync enviado (${formatTime(elapsed)} desde o início).`);
-      syncBtn.textContent = "✅ Enviado!";
-      setTimeout(() => { syncBtn.textContent = "📍 Sincronizar"; }, 2000);
+      syncBtn.textContent = "✅";
+      setTimeout(() => { syncBtn.textContent = "📍 Sync"; }, 2000);
     });
     bar.appendChild(syncBtn);
   } else {
     const hint = document.createElement("span");
-    hint.textContent = "Aguardando sync do host…";
-    hint.style.cssText = "font-size:11px;color:#8b8ba0;";
+    hint.textContent = "⏳ aguardando host";
+    hint.style.cssText = "font-size:10px;color:#8b8ba0;white-space:nowrap;";
     bar.appendChild(hint);
   }
 
   mediaEl.style.position = "relative";
   mediaEl.appendChild(bar);
-
-  // Empurra o iframe para baixo da barra
   mediaEl.style.paddingTop = "36px";
+
+  // Carrega o primeiro DUB disponível por padrão
+  const firstDub = iframeSources.findIndex((s) => s.lang === "dub");
+  loadIframe(firstDub >= 0 ? firstDub : 0);
 }
 
 // ── YouTube (IFrame API + sync) ───────────────────────────────────────────────

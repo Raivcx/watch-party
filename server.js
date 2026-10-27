@@ -5,7 +5,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { createRoom, getRoom, deleteRoom } from "./lib/roomStore.js";
+import { createRoom, getRoom, deleteRoom, getRoomCount } from "./lib/roomStore.js";
 import { getEmbedSources } from "./lib/streams.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,7 +25,7 @@ app.use(express.json());
 app.use(express.static(join(__dirname, "public")));
 
 // Health check — Render + UptimeRobot keep-alive
-app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
+app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now(), rooms: getRoomCount() }));
 
 // REST: room metadata
 app.get("/api/room/:id", (req, res) => {
