@@ -148,10 +148,18 @@ function initSocket() {
   socket.on("host-promoted", ({ message }) => {
     isHost = true;
     addSystem(`👑 ${message}`);
-    // Configura o RTC como host — setupScreenshare tem guard interno (rtcSetup)
-    // para não duplicar listeners caso já tenha sido chamado antes.
-    // Isso também adiciona o click listener no shareBtn.
-    setupScreenshare();
+    // Viewer que vira host já passou por setupRTCViewer() que setou rtcSetup=true,
+    // então setupScreenshare() retornaria imediatamente sem mostrar o botão.
+    // Aqui fazemos manualmente o que setupScreenshare() faria para um novo host:
+    // 1. Garante que o signaling está configurado (caso ainda não esteja)
+    if (!rtcSetup) {
+      rtcSetup = true;
+      setupRTCSignaling();
+    }
+    // 2. Mostra o botão de compartilhar tela e registra o click (sem duplicar)
+    shareBtn.removeEventListener("click", startShare); // remove caso já exista
+    shareBtn.addEventListener("click", startShare);
+    shareBtn.style.display = "block";
   });
 
   socket.on("host-changed", ({ newHostId, newHostName }) => {
@@ -634,4 +642,5 @@ function showError(msg) {
   errorText.textContent = msg;
   errorOverlay.style.display = "flex";
 }
+
 
