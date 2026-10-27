@@ -88,8 +88,10 @@ function setupMedia(type, media) {
 }
 
 // ── HLS Player (movie / serie via TMDB-Embed-API) ────────────────────────────
-let hlsVideo = null;
+let hlsVideo        = null;
 let suppressVideoEvents = false;
+let currentStreams   = [];
+let currentStreamIdx = 0;
 
 async function setupHLS(type, media) {
   const loading = showLoadingOverlay("🔍 Buscando streams…");
@@ -99,7 +101,6 @@ async function setupHLS(type, media) {
     const res = await fetch(`/api/streams/${roomId}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
-    // A API pode retornar { streams: [...] } ou array direto
     streams = Array.isArray(body) ? body : (body.streams || []);
   } catch (err) {
     loading.remove();
@@ -116,6 +117,8 @@ async function setupHLS(type, media) {
   }
 
   loading.remove();
+  currentStreams    = streams;
+  currentStreamIdx = 0;
 
   const video = document.createElement("video");
   video.id = "hls-video";
@@ -124,15 +127,14 @@ async function setupHLS(type, media) {
   mediaEl.appendChild(video);
   hlsVideo = video;
 
-  const best = streams[0];
-  addSystem(`▶ ${best.title || best.quality || "stream"} ${ptbrBadge(best)}`.trim());
+  addSystem(`▶ ${streams[0].title || streams[0].quality || "stream"} ${ptbrBadge(streams[0])}`.trim());
 
   buildQualityBar(streams, video, media);
-  loadStream(best, video);
+  loadStream(streams[0], video);
   setupVideoSync(video);
 
-  if (best.subtitles?.length) {
-    attachSubtitles(video, best.subtitles);
+  if (streams[0].subtitles?.length) {
+    attachSubtitles(video, streams[0].subtitles);
   }
 }
 
@@ -168,15 +170,38 @@ function loadStream(stream, video) {
         video.play().catch(() => {});
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) addSystem(`❌ Erro HLS (${data.type}) — tente outra fonte.`);
+        if (data.fatal) {
+          addSystem(`❌ Erro HLS (${data.type}) — tentando próxima fonte…`);
+          tryNextStream(video);
+        }
       });
       video._hls = hls;
     } else {
       addSystem("Seu browser não suporta HLS. Use Chrome ou Firefox.");
     }
   } else {
+    // MP4 direto
     video.src = url;
     video.load();
+    // Se após 8 segundos ainda não começou, tenta o próximo
+    const timer = setTimeout(() => {
+      if (video.readyState < 2) {
+        addSystem("⏱ Stream MP4 sem resposta — tentando próxima fonte…");
+        tryNextStream(video);
+      }
+    }, 8000);
+    video.addEventListener("canplay", () => clearTimeout(timer), { once: true });
+  }
+}
+
+function tryNextStream(video) {
+  currentStreamIdx++;
+  if (currentStreamIdx < currentStreams.length) {
+    const next = currentStreams[currentStreamIdx];
+    addSystem(`🔄 Tentando: ${next.title || next.quality || `fonte ${currentStreamIdx + 1}`}`);
+    loadStream(next, video);
+  } else {
+    addSystem("❌ Nenhuma fonte funcionou. Verifique a TMDB-Embed-API (ENABLE_PROXY=true no painel admin).");
   }
 }
 
