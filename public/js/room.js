@@ -1,22 +1,22 @@
 // Watch Party Room — Vanilla JS client
-// Media: HLS.js player (movie/serie via TMDB-Embed-API), YouTube sync, WebRTC screenshare
+// Media: HLS.js player (movie/serie), YouTube sync, WebRTC screenshare
 
 const socket = io({ transports: ["websocket", "polling"] });
 const roomId = window.location.pathname.split("/room/")[1]?.split("/")[0];
 
 if (!roomId) showError("No room ID in the URL.");
 
-const messagesEl   = document.getElementById("chat-messages");
-const chatForm     = document.getElementById("chat-form");
-const chatInput    = document.getElementById("chat-input");
-const userCountEl  = document.getElementById("user-count");
-const mediaEl      = document.getElementById("media-container");
-const shareBtn     = document.getElementById("start-share-btn");
+const messagesEl  = document.getElementById("chat-messages");
+const chatForm    = document.getElementById("chat-form");
+const chatInput   = document.getElementById("chat-input");
+const userCountEl = document.getElementById("user-count");
+const mediaEl     = document.getElementById("media-container");
+const shareBtn    = document.getElementById("start-share-btn");
 const errorOverlay = document.getElementById("error-overlay");
-const errorText    = document.getElementById("error-text");
+const errorText   = document.getElementById("error-text");
 
-let myId      = null;
-let isHost    = false;
+let myId        = null;
+let isHost      = false;
 let onlineCount = 1;
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -65,8 +65,8 @@ socket.on("room-info", (info) => {
   setupMedia(info.type, info.media);
 });
 
-socket.on("room-error",  (msg) => showError(msg));
-socket.on("host-left",   () => {
+socket.on("room-error", (msg) => showError(msg));
+socket.on("host-left",  () => {
   errorText.textContent = "O host encerrou a sessão. Esta sala foi fechada.";
   errorOverlay.style.display = "flex";
   setTimeout(() => { window.location.href = "/"; }, 4000);
@@ -82,24 +82,25 @@ function updateCount(delta) {
 
 // ── Media router ──────────────────────────────────────────────────────────────
 function setupMedia(type, media) {
-  if (type === "movie" || type === "serie") setupHLS(type, media);
-  else if (type === "youtube")             setupYouTube(media.videoId);
-  else if (type === "screenshare")         isHost ? setupScreenshare() : setupRTCViewer();
+  if      (type === "movie" || type === "serie") setupHLS(type, media);
+  else if (type === "youtube")                   setupYouTube(media.videoId);
+  else if (type === "screenshare")               isHost ? setupScreenshare() : setupRTCViewer();
 }
 
-// ── HLS Player (movie / serie via TMDB-Embed-API) ─────────────────────────────
+// ── HLS Player (movie / serie via TMDB-Embed-API) ────────────────────────────
 let hlsVideo = null;
 let suppressVideoEvents = false;
 
 async function setupHLS(type, media) {
-  // Loading state
   const loading = showLoadingOverlay("🔍 Buscando streams…");
 
   let streams;
   try {
     const res = await fetch(`/api/streams/${roomId}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    streams = await res.json();
+    const body = await res.json();
+    // A API pode retornar { streams: [...] } ou array direto
+    streams = Array.isArray(body) ? body : (body.streams || []);
   } catch (err) {
     loading.remove();
     showNoStreamsOverlay(media);
@@ -116,7 +117,6 @@ async function setupHLS(type, media) {
 
   loading.remove();
 
-  // Build video element
   const video = document.createElement("video");
   video.id = "hls-video";
   video.controls = true;
@@ -124,57 +124,41 @@ async function setupHLS(type, media) {
   mediaEl.appendChild(video);
   hlsVideo = video;
 
-  // Informa no chat qual tipo de stream foi selecionado
   const best = streams[0];
-  const ptbrLabel = ptbrBadge(best);
-  addSystem(`▶ ${best.title || best.quality || "stream"} ${ptbrLabel}`.trim());
+  addSystem(`▶ ${best.title || best.quality || "stream"} ${ptbrBadge(best)}`.trim());
 
-  // Quality selector overlay
   buildQualityBar(streams, video, media);
-
-  // Load best stream (já ordenado com PT-BR no topo pelo servidor)
-  loadStream(streams[0], video);
-
-  // Sync controls (host broadcasts, viewers follow)
+  loadStream(best, video);
   setupVideoSync(video);
 
-  // Subtitles — PT-BR selecionado por padrão
-  if (streams[0]?.subtitles?.length) {
-    attachSubtitles(video, streams[0].subtitles);
+  if (best.subtitles?.length) {
+    attachSubtitles(video, best.subtitles);
   }
 }
 
-/**
- * Retorna uma badge de texto indicando se o stream é dublado/legendado PT-BR.
- * Usado na barra de qualidade e no chat.
- */
+// Retorna badge PT-BR se detectado no stream
 function ptbrBadge(stream) {
   if (!stream) return "";
-  const haystack = [
-    stream.title || "", stream.name || "", stream.provider || "",
-  ].join(" ").toLowerCase();
-
-  if (/\b(dub(lado)?|dubbed|portugu[eê]s|pt[-_]?br|ptbr)\b/.test(haystack)) {
-    if (!/\b(leg|legenda|sub)\b/.test(haystack)) return "🇧🇷 DUB";
+  const h = [stream.title || "", stream.name || "", stream.provider || ""].join(" ").toLowerCase();
+  if (/\b(dub(lado)?|dubbed|portugu[eê]s|pt[-_]?br|ptbr)\b/.test(h) && !/\b(leg|legenda|sub)\b/.test(h)) {
+    return "🇧🇷 DUB";
   }
   const hasPtbrSub = (stream.subtitles || []).some((s) =>
     /portugu|pt[-_]?br|ptbr|brazil/i.test(s.lang || "")
   );
-  if (hasPtbrSub) return "🇧🇷 LEG";
-  return "";
+  return hasPtbrSub ? "🇧🇷 LEG" : "";
 }
 
 function loadStream(stream, video) {
-  addSystem(`▶ ${stream.title || stream.quality || "stream"}`);
+  addSystem(`Carregando: ${stream.title || stream.quality || "stream"}`);
 
   if (video._hls) { video._hls.destroy(); video._hls = null; }
 
   const url = stream.url;
 
   if (url.includes(".m3u8") || url.includes("m3u8-proxy")) {
-    // HLS stream
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = url; // Safari — suporte nativo
+      video.src = url;
     } else if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
       hls.loadSource(url);
@@ -184,36 +168,16 @@ function loadStream(stream, video) {
         video.play().catch(() => {});
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
-          addSystem(`❌ Erro no stream (${data.type}) — tente outra fonte.`);
-          console.error("[hls]", data);
-        }
+        if (data.fatal) addSystem(`❌ Erro HLS (${data.type}) — tente outra fonte.`);
       });
       video._hls = hls;
     } else {
       addSystem("Seu browser não suporta HLS. Use Chrome ou Firefox.");
     }
   } else {
-    // MP4 direto
     video.src = url;
     video.load();
   }
-}
-
-/**
- * Retorna uma badge de texto indicando se o stream é dublado/legendado PT-BR.
- */
-function ptbrBadge(stream) {
-  if (!stream) return "";
-  const haystack = [stream.title || "", stream.name || "", stream.provider || ""].join(" ").toLowerCase();
-  if (/\b(dub(lado)?|dubbed|portugu[eê]s|pt[-_]?br|ptbr)\b/.test(haystack)) {
-    if (!/\b(leg|legenda|sub)\b/.test(haystack)) return "🇧🇷 DUB";
-  }
-  const hasPtbrSub = (stream.subtitles || []).some((s) =>
-    /portugu|pt[-_]?br|ptbr|brazil/i.test(s.lang || "")
-  );
-  if (hasPtbrSub) return "🇧🇷 LEG";
-  return "";
 }
 
 function buildQualityBar(streams, video, media) {
@@ -222,7 +186,7 @@ function buildQualityBar(streams, video, media) {
     position:absolute;top:0;right:0;z-index:20;
     background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);
     padding:6px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
-    font-size:12px;color:#fff;max-width:60%;
+    font-size:12px;color:#fff;max-width:70%;
   `;
 
   const label = document.createElement("span");
@@ -233,19 +197,15 @@ function buildQualityBar(streams, video, media) {
   streams.forEach((s, i) => {
     const badge = ptbrBadge(s);
     const btn = document.createElement("button");
-    // Mostra qualidade + badge PT-BR se houver
     btn.textContent = `${s.quality || `#${i + 1}`}${badge ? " " + badge : ""}`;
-    const isFirst = i === 0;
     btn.style.cssText = `
       padding:3px 8px;border:1px solid ${badge ? "#2ecc71" : "#555"};
-      background:${isFirst ? "#5865f2" : "transparent"};
+      background:${i === 0 ? "#5865f2" : "transparent"};
       color:#fff;border-radius:4px;cursor:pointer;font-size:11px;
     `;
     btn.title = s.title || s.provider || "";
     btn.addEventListener("click", () => {
-      if (video._hls) { video._hls.destroy(); video._hls = null; }
       loadStream(s, video);
-      // Atualiza legendas para o stream selecionado
       video.querySelectorAll("track").forEach((t) => t.remove());
       if (s.subtitles?.length) attachSubtitles(video, s.subtitles);
       bar.querySelectorAll("button").forEach((b) => b.style.background = "transparent");
@@ -279,25 +239,20 @@ function showNoStreamsOverlay(media) {
         Nenhum stream disponível para<br><strong>${media.title || "este título"}</strong>
       </p>
       <p style="color:#8b8ba0;font-size:13px;">
-        Verifique se o serviço TMDB-Embed-API está rodando e acessível (EMBED_API_URL no Render).
+        Verifique se a TMDB-Embed-API está acessível (EMBED_API_URL no Render).
       </p>
     </div>`;
 }
 
 function attachSubtitles(video, subtitles) {
-  // Remove tracks anteriores
   video.querySelectorAll("track").forEach((t) => t.remove());
-
-  // Ordena: PT-BR primeiro, depois EN, depois o resto
   const sorted = [...subtitles].sort((a, b) => subLangScore(b.lang) - subLangScore(a.lang));
-
   sorted.forEach((sub, i) => {
     const track = document.createElement("track");
     track.kind    = "subtitles";
     track.label   = sub.lang || "Subtitle";
-    track.srclang = sub.lang?.slice(0, 2).toLowerCase() || "pt";
+    track.srclang = (sub.lang || "pt").slice(0, 2).toLowerCase();
     track.src     = `/api/sub-proxy?url=${encodeURIComponent(sub.url)}`;
-    // Ativa PT-BR por padrão; se não houver PT-BR, ativa a primeira disponível
     track.default = i === 0;
     video.appendChild(track);
   });
@@ -305,7 +260,7 @@ function attachSubtitles(video, subtitles) {
 
 function subLangScore(lang = "") {
   if (/portugu|pt[-_]?br|ptbr|brazil/i.test(lang)) return 3;
-  if (/\bpt\b/i.test(lang))                         return 2; // pt-PT
+  if (/\bpt\b/i.test(lang))                         return 2;
   if (/\ben\b|english/i.test(lang))                 return 1;
   return 0;
 }
@@ -315,10 +270,9 @@ function setupVideoSync(video) {
   if (!video) return;
 
   if (isHost) {
-    // Host broadcasts play/pause/seek
     video.addEventListener("play",   () => {
       if (suppressVideoEvents) return;
-      socket.emit("video-sync", { action: "play", time: video.currentTime });
+      socket.emit("video-sync", { action: "play",  time: video.currentTime });
     });
     video.addEventListener("pause",  () => {
       if (suppressVideoEvents) return;
@@ -326,12 +280,11 @@ function setupVideoSync(video) {
     });
     video.addEventListener("seeked", () => {
       if (suppressVideoEvents) return;
-      socket.emit("video-sync", { action: "seek", time: video.currentTime });
+      socket.emit("video-sync", { action: "seek",  time: video.currentTime });
     });
-    addSystem("Host: seus controles de play/pause/seek são sincronizados.");
+    addSystem("Host: play/pause/seek são sincronizados.");
   }
 
-  // All clients receive sync events
   socket.on("video-sync", ({ action, time }) => {
     if (!video) return;
     suppressVideoEvents = true;
@@ -387,8 +340,9 @@ function setupYouTube(videoId) {
 
 // ── WebRTC Screen Share ───────────────────────────────────────────────────────
 let localStream = null;
-const peers = {};
-let rtcSetup = false;
+const peers     = {};
+let rtcSetup    = false;
+
 const ICE = { iceServers: [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
@@ -429,7 +383,7 @@ function setupRTCSignaling() {
   socket.on("rtc-ice", async ({ from, candidate }) => {
     const pc = peers[from];
     if (!pc) return;
-    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch { /* late */ }
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch { /* late candidate */ }
   });
 }
 
@@ -459,17 +413,19 @@ async function sendOffer(peerId) {
   socket.emit("rtc-offer", { to: peerId, sdp: offer });
 }
 
-function newPC(peerId, isHost) {
+function newPC(peerId, isHostPeer) {
   if (peers[peerId]) { peers[peerId].close(); delete peers[peerId]; }
   const pc = new RTCPeerConnection(ICE);
   peers[peerId] = pc;
-  if (isHost && localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-  pc.onicecandidate = ({ candidate }) => { if (candidate) socket.emit("rtc-ice", { to: peerId, candidate }); };
+  if (isHostPeer && localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate) socket.emit("rtc-ice", { to: peerId, candidate });
+  };
   pc.ontrack = ({ streams }) => {
     let v = document.getElementById("screen-video");
     if (v) { v.srcObject = streams[0]; return; }
     v = document.createElement("video");
-    v.id = "screen-video"; v.autoplay = true; v.playsInline = true; v.muted = true;
+    v.id = "screen-video"; v.autoplay = true; v.playsInline = true; v.muted = false;
     v.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
     v.srcObject = streams[0];
     mediaEl.appendChild(v);
