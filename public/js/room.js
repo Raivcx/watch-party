@@ -124,19 +124,44 @@ async function setupHLS(type, media) {
   mediaEl.appendChild(video);
   hlsVideo = video;
 
+  // Informa no chat qual tipo de stream foi selecionado
+  const best = streams[0];
+  const ptbrLabel = ptbrBadge(best);
+  addSystem(`▶ ${best.title || best.quality || "stream"} ${ptbrLabel}`.trim());
+
   // Quality selector overlay
   buildQualityBar(streams, video, media);
 
-  // Load best stream
+  // Load best stream (já ordenado com PT-BR no topo pelo servidor)
   loadStream(streams[0], video);
 
   // Sync controls (host broadcasts, viewers follow)
   setupVideoSync(video);
 
-  // Subtitles
+  // Subtitles — PT-BR selecionado por padrão
   if (streams[0]?.subtitles?.length) {
     attachSubtitles(video, streams[0].subtitles);
   }
+}
+
+/**
+ * Retorna uma badge de texto indicando se o stream é dublado/legendado PT-BR.
+ * Usado na barra de qualidade e no chat.
+ */
+function ptbrBadge(stream) {
+  if (!stream) return "";
+  const haystack = [
+    stream.title || "", stream.name || "", stream.provider || "",
+  ].join(" ").toLowerCase();
+
+  if (/\b(dub(lado)?|dubbed|portugu[eê]s|pt[-_]?br|ptbr)\b/.test(haystack)) {
+    if (!/\b(leg|legenda|sub)\b/.test(haystack)) return "🇧🇷 DUB";
+  }
+  const hasPtbrSub = (stream.subtitles || []).some((s) =>
+    /portugu|pt[-_]?br|ptbr|brazil/i.test(s.lang || "")
+  );
+  if (hasPtbrSub) return "🇧🇷 LEG";
+  return "";
 }
 
 function loadStream(stream, video) {
@@ -193,14 +218,24 @@ function buildQualityBar(streams, video, media) {
   bar.appendChild(label);
 
   streams.forEach((s, i) => {
+    const badge = ptbrBadge(s);
     const btn = document.createElement("button");
-    btn.textContent = s.quality || `#${i+1}`;
-    btn.style.cssText = `padding:3px 8px;border:1px solid #555;background:${i===0?"#5865f2":"transparent"};color:#fff;border-radius:4px;cursor:pointer;font-size:11px;`;
+    // Mostra qualidade + badge PT-BR se houver
+    btn.textContent = `${s.quality || `#${i + 1}`}${badge ? " " + badge : ""}`;
+    const isFirst = i === 0;
+    btn.style.cssText = `
+      padding:3px 8px;border:1px solid ${badge ? "#2ecc71" : "#555"};
+      background:${isFirst ? "#5865f2" : "transparent"};
+      color:#fff;border-radius:4px;cursor:pointer;font-size:11px;
+    `;
+    btn.title = s.title || s.provider || "";
     btn.addEventListener("click", () => {
-      // Destroy old HLS instance if any
       if (video._hls) { video._hls.destroy(); video._hls = null; }
       loadStream(s, video);
-      bar.querySelectorAll("button").forEach(b => b.style.background = "transparent");
+      // Atualiza legendas para o stream selecionado
+      video.querySelectorAll("track").forEach((t) => t.remove());
+      if (s.subtitles?.length) attachSubtitles(video, s.subtitles);
+      bar.querySelectorAll("button").forEach((b) => b.style.background = "transparent");
       btn.style.background = "#5865f2";
     });
     bar.appendChild(btn);
@@ -237,15 +272,29 @@ function showNoStreamsOverlay(media) {
 }
 
 function attachSubtitles(video, subtitles) {
-  subtitles.forEach((sub) => {
+  // Remove tracks anteriores
+  video.querySelectorAll("track").forEach((t) => t.remove());
+
+  // Ordena: PT-BR primeiro, depois EN, depois o resto
+  const sorted = [...subtitles].sort((a, b) => subLangScore(b.lang) - subLangScore(a.lang));
+
+  sorted.forEach((sub, i) => {
     const track = document.createElement("track");
-    track.kind = "subtitles";
-    track.label = sub.lang || "Subtitle";
-    track.srclang = sub.lang?.slice(0,2).toLowerCase() || "pt";
-    track.src = `/api/sub-proxy?url=${encodeURIComponent(sub.url)}`; // proxy for CORS
-    if (/portugu|pt|br/i.test(sub.lang || "")) track.default = true;
+    track.kind    = "subtitles";
+    track.label   = sub.lang || "Subtitle";
+    track.srclang = sub.lang?.slice(0, 2).toLowerCase() || "pt";
+    track.src     = `/api/sub-proxy?url=${encodeURIComponent(sub.url)}`;
+    // Ativa PT-BR por padrão; se não houver PT-BR, ativa a primeira disponível
+    track.default = i === 0;
     video.appendChild(track);
   });
+}
+
+function subLangScore(lang = "") {
+  if (/portugu|pt[-_]?br|ptbr|brazil/i.test(lang)) return 3;
+  if (/\bpt\b/i.test(lang))                         return 2; // pt-PT
+  if (/\ben\b|english/i.test(lang))                 return 1;
+  return 0;
 }
 
 // ── Video Sync (host → viewers) ───────────────────────────────────────────────
