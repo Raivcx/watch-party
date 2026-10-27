@@ -16,14 +16,13 @@ import {
 } from "discord.js";
 import { searchTitle } from "../lib/tmdb.js";
 import { extractYouTubeId } from "../lib/youtube.js";
-import { createRoom } from "../lib/roomStore.js";
+import { createRoom, listRooms } from "../lib/roomStore.js";
 import { commands } from "./commands.js";
 
 // Warn early about missing env vars
 if (!process.env.DISCORD_TOKEN) console.error("[bot] DISCORD_TOKEN is not set!");
 if (!process.env.CLIENT_ID)     console.error("[bot] CLIENT_ID is not set!");
 if (!process.env.TMDB_API_KEY)  console.warn("[bot] TMDB_API_KEY is not set — /watch will fail.");
-if (!process.env.EMBED_API_URL) console.warn("[bot] EMBED_API_URL is not set — movie/serie streams will fail.");
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -65,6 +64,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleYouTube(interaction);
     } else if (interaction.commandName === "screenshare") {
       await handleScreenshare(interaction);
+    } else if (interaction.commandName === "status") {
+      await handleStatus(interaction);
     }
   } catch (err) {
     console.error(`[bot] Unhandled error in /${interaction.commandName}:`, err);
@@ -277,6 +278,49 @@ async function handleScreenshare(interaction) {
       ),
     ],
   });
+}
+
+// --- /status ---
+// Lista todas as salas abertas no servidor com links para entrar.
+async function handleStatus(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const rooms = listRooms();
+
+  if (rooms.length === 0) {
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("📊 Status do Servidor")
+          .setDescription("Nenhuma sala aberta no momento.")
+          .setColor(0x5865f2),
+      ],
+    });
+  }
+
+  const typeEmoji = { movie: "🎬", serie: "📺", youtube: "▶️", screenshare: "🖥️" };
+  const typeLabel = { movie: "Filme", serie: "Série", youtube: "YouTube", screenshare: "Screenshare" };
+
+  const lines = rooms.map((r) => {
+    const emoji = typeEmoji[r.type] || "🎬";
+    const label = typeLabel[r.type] || r.type;
+    const title = r.type === "screenshare"
+      ? "Screen Share"
+      : r.title + (r.season ? ` S${r.season}E${r.episode}` : "");
+    const roomUrl = `${PUBLIC_URL}/room/${r.id}`;
+    const users   = r.userCount > 0 ? `👥 ${r.userCount}` : "👤 vazia";
+    const age     = Math.floor((Date.now() - r.createdAt) / 60000);
+    const ageStr  = age < 60 ? `${age}m` : `${Math.floor(age / 60)}h${age % 60}m`;
+    return `${emoji} **${title}** · ${label} · ${users} · ${ageStr}\n[Entrar na sala](${roomUrl})`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 Status — ${rooms.length} sala${rooms.length !== 1 ? "s" : ""} ativa${rooms.length !== 1 ? "s" : ""}`)
+    .setDescription(lines.join("\n\n"))
+    .setColor(0x5865f2)
+    .setFooter({ text: `${PUBLIC_URL}` });
+
+  return interaction.editReply({ embeds: [embed] });
 }
 
 // Start the bot — wrapped in try/catch para não derrubar o servidor HTTP se o token for inválido

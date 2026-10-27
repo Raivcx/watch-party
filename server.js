@@ -24,6 +24,18 @@ const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 app.use(express.json());
 app.use(express.static(join(__dirname, "public")));
 
+// Bloqueia abertura de popups e navegação indesejada pelos iframes dos players.
+// allow-popups-to-escape-sandbox é explicitamente omitido.
+app.use((req, res, next) => {
+  // Impede que a página seja carregada em iframes de outros sites (clickjacking)
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  // Bloqueia detecção de MIME type incorreto
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  // Referrer mínimo — não vaza URL para os players externos
+  res.setHeader("Referrer-Policy", "strict-origin");
+  next();
+});
+
 // Health check — Render + UptimeRobot keep-alive
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now(), rooms: getRoomCount() }));
 
@@ -137,11 +149,34 @@ io.on("connection", (socket) => {
     if (!currentRoomId) return;
     const room = getRoom(currentRoomId);
     if (!room) return;
+
     room.userCount = Math.max(0, room.userCount - 1);
+
     if (room.hostSocketId === socket.id) {
-      io.to(currentRoomId).emit("host-left");
-      deleteRoom(currentRoomId);
-      console.log(`[room] ${currentRoomId} destroyed (host left)`);
+      if (room.type === "screenshare" && room.userCount > 0) {
+        // Screenshare: transfere o host para outro viewer em vez de destruir a sala
+        const sockets = io.sockets.adapter.rooms.get(currentRoomId);
+        const nextHostId = sockets
+          ? [...sockets].find((sid) => sid !== socket.id)
+          : null;
+
+        if (nextHostId) {
+          room.hostSocketId = nextHostId;
+          io.to(nextHostId).emit("host-promoted", { message: "Você é o novo host da sala." });
+          socket.to(currentRoomId).emit("host-changed", { newHostId: nextHostId });
+          console.log(`[room] host transferred to ${nextHostId} in ${currentRoomId}`);
+        } else {
+          // Sala ficou vazia mesmo assim
+          io.to(currentRoomId).emit("host-left");
+          deleteRoom(currentRoomId);
+          console.log(`[room] ${currentRoomId} destroyed (no viewers left)`);
+        }
+      } else {
+        // Outros tipos (movie, serie, youtube): host sai = sala encerra
+        io.to(currentRoomId).emit("host-left");
+        deleteRoom(currentRoomId);
+        console.log(`[room] ${currentRoomId} destroyed (host left)`);
+      }
     } else {
       socket.to(currentRoomId).emit("user-left", { socketId: socket.id });
     }

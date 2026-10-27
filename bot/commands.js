@@ -3,11 +3,11 @@
 export const commands = [
   {
     name: "watch",
-    description: "Create a watch-party room for a movie or series",
+    description: "Cria uma sala para assistir filme ou série",
     options: [
       {
         name: "type",
-        description: "Movie or TV series?",
+        description: "Filme ou série?",
         type: 3, // STRING
         required: true,
         choices: [
@@ -17,7 +17,7 @@ export const commands = [
       },
       {
         name: "name",
-        description: "Title to search on TMDB",
+        description: "Título para buscar no TMDB",
         type: 3, // STRING
         required: true,
       },
@@ -25,11 +25,11 @@ export const commands = [
   },
   {
     name: "yt",
-    description: "Create a watch-party room synced to a YouTube video",
+    description: "Cria uma sala sincronizada com um vídeo do YouTube",
     options: [
       {
         name: "link",
-        description: "YouTube link or video ID",
+        description: "Link do YouTube ou ID do vídeo",
         type: 3, // STRING
         required: true,
       },
@@ -37,6 +37,10 @@ export const commands = [
   },
   {
     name: "screenshare",
-    description: "Create a watch-party room for screen sharing via WebRTC",
+    description: "Cria uma sala de compartilhamento de tela via WebRTC",
+  },
+  {
+    name: "status",
+    description: "Mostra as salas abertas no servidor com links para entrar",
   },
 ];

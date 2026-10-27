@@ -71,6 +71,18 @@ socket.on("host-left",  () => {
   errorOverlay.style.display = "flex";
   setTimeout(() => { window.location.href = "/"; }, 4000);
 });
+
+// Host transfer — só acontece em salas de screenshare
+socket.on("host-promoted", ({ message }) => {
+  isHost = true;
+  addSystem(`👑 ${message}`);
+  // Mostra o botão de compartilhar tela para o novo host
+  shareBtn.style.display = "block";
+});
+
+socket.on("host-changed", ({ newHostId }) => {
+  addSystem(`👑 Novo host: ${newHostId.slice(0, 6)}`);
+});
 socket.on("chat-message", addMessage);
 socket.on("user-joined", () => { updateCount(1);  addSystem("Um usuário entrou."); });
 socket.on("user-left",   () => { updateCount(-1); addSystem("Um usuário saiu."); });
@@ -133,19 +145,34 @@ function loadIframe(idx) {
   if (!iframeSources[idx]) return;
   currentSrcIdx = idx;
 
-  // Remove iframe anterior
   if (currentIframe) currentIframe.remove();
 
   const iframe = document.createElement("iframe");
-  iframe.src              = iframeSources[idx].url;
-  iframe.allowFullscreen  = true;
-  iframe.allow            = "autoplay; fullscreen; encrypted-media; picture-in-picture";
-  iframe.style.cssText    = "width:100%;height:100%;border:none;display:block;background:#000;";
+  iframe.src             = iframeSources[idx].url;
+  iframe.allowFullscreen = true;
+
+  // Sandbox: permite scripts e same-origin necessários para o player funcionar,
+  // mas bloqueia navegação top-level (impede redirects de phishing/ads),
+  // popups (window.open), formulários e modais do browser.
+  iframe.sandbox = [
+    "allow-scripts",          // player precisa de JS
+    "allow-same-origin",      // cookies/storage do player
+    "allow-forms",            // alguns players usam forms internamente
+    "allow-presentation",     // fullscreen API
+    // NÃO incluído: allow-popups, allow-top-navigation, allow-pointer-lock
+    // Isso bloqueia: window.open(), ads que abrem novas abas,
+    // redirects que tentam navegar o tab principal (phishing),
+    // e allow-pointer-lock que é usado por alguns malwares.
+  ].join(" ");
+
+  iframe.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
+  iframe.style.cssText = "width:100%;height:100%;border:none;display:block;background:#000;";
+
   mediaEl.appendChild(iframe);
   currentIframe  = iframe;
   iframeLoadedAt = Date.now();
 
-  addSystem(`▶ ${iframeSources[idx].provider} — fonte ${idx + 1}/${iframeSources.length}`);
+  addSystem(`▶ ${iframeSources[idx].provider} · ${iframeSources[idx].label || "Auto"}`);
 }
 
 function buildIframeBar(media) {
