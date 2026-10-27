@@ -142,23 +142,38 @@ async function setupHLS(type, media) {
 function loadStream(stream, video) {
   addSystem(`Carregando: ${stream.title || stream.quality || "stream"}`);
 
+  // Passa a URL pelo proxy do servidor para evitar erros de CORS
+  const proxyUrl = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
+
+  const src = stream.url.includes(".m3u8")
+    ? proxyUrl(stream.url)   // HLS via proxy
+    : stream.url;            // MP4 direto (geralmente sem CORS)
+
   if (stream.url.includes(".m3u8")) {
-    // HLS stream — use HLS.js if browser doesn't support natively
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = stream.url;
+      // Safari — suporte nativo, mas ainda precisa do proxy p/ CORS
+      video.src = proxyUrl(stream.url);
     } else if (window.Hls && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true });
-      hls.loadSource(stream.url);
+      if (video._hls) { video._hls.destroy(); video._hls = null; }
+      const hls = new Hls({
+        enableWorker: true,
+        xhrSetup: (xhr, url) => {
+          // HLS.js já usa a URL reescrita pelo proxy, nada extra necessário
+        },
+      });
+      hls.loadSource(proxyUrl(stream.url));
       hls.attachMedia(video);
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) addSystem("HLS error: " + data.type);
+        if (data.fatal) {
+          addSystem(`HLS erro fatal (${data.type}) — tentando próxima fonte…`);
+        }
       });
       video._hls = hls;
     } else {
       addSystem("Seu browser não suporta HLS. Tente Chrome/Firefox.");
     }
   } else {
-    // Direct MP4
+    // MP4 direto
     video.src = stream.url;
   }
 }
