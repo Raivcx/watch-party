@@ -14,24 +14,85 @@ const mediaEl      = document.getElementById("media-container");
 const shareBtn     = document.getElementById("start-share-btn");
 const errorOverlay = document.getElementById("error-overlay");
 const errorText    = document.getElementById("error-text");
+const nameModal    = document.getElementById("name-modal");
+const nameInput    = document.getElementById("name-input");
+const nameForm     = document.getElementById("name-form");
 
 let myId        = null;
 let isHost      = false;
-let onlineCount = 1;
+let onlineCount = 0;
+let myName      = localStorage.getItem("watchPartyName") || "";
+
+// ── Nome do usuário ───────────────────────────────────────────────────────────
+if (!myName) {
+  nameModal.style.display = "flex";
+  nameInput.focus();
+} else {
+  initSocket();
+}
+
+nameForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const val = nameInput.value.trim().slice(0, 20);
+  if (!val) return;
+  myName = val;
+  localStorage.setItem("watchPartyName", myName);
+  nameModal.style.display = "none";
+  initSocket();
+});
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
+let msgTimestamps = [];
+const MSG_LIMIT   = 5;
+const MSG_WINDOW  = 5000;
+
 chatForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = chatInput.value.trim();
   if (!text) return;
-  socket.emit("chat-message", { text });
+
+  const now = Date.now();
+  msgTimestamps = msgTimestamps.filter((t) => now - t < MSG_WINDOW);
+  if (msgTimestamps.length >= MSG_LIMIT) {
+    addSystem("⚠️ Você está enviando mensagens rápido demais. Aguarde um momento.");
+    return;
+  }
+  msgTimestamps.push(now);
+
+  socket.emit("chat-message", { text, name: myName });
   chatInput.value = "";
 });
 
-function addMessage({ socketId, text }) {
+// Enter envia (não duplica com o submit do form, mas garante que
+// Enter dentro do <input> não seja bloqueado por eventos externos)
+chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    chatForm.requestSubmit();
+  }
+});
+
+// Indicador de "digitando"
+let typingTimer = null;
+let isTyping = false;
+chatInput.addEventListener("input", () => {
+  if (!isTyping) {
+    isTyping = true;
+    socket.emit("typing-start");
+  }
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => {
+    isTyping = false;
+    socket.emit("typing-stop");
+  }, 1500);
+});
+
+function addMessage({ socketId, text, name }) {
+  const isSelf = socketId === myId;
+  const displayName = isSelf ? "Você" : (name || socketId.slice(0, 6));
   const el = document.createElement("div");
-  el.className = "msg" + (socketId === myId ? " self" : "");
-  el.innerHTML = `<div class="who">${socketId === myId ? "You" : socketId.slice(0, 6)}</div>${esc(text)}`;
+  el.className = "msg" + (isSelf ? " self" : "");
+  el.innerHTML = `<div class="who">${esc(displayName)}</div>${esc(text)}`;
   messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -51,45 +112,108 @@ function esc(s) {
 }
 
 // ── Socket ────────────────────────────────────────────────────────────────────
-socket.on("connect", () => {
-  addSystem("Conectando à sala…");
-  socket.emit("join-room", roomId);
-});
+function initSocket() {
+  socket.on("connect", () => {
+    addSystem("Conectando à sala…");
+    socket.emit("join-room", roomId);
+  });
 
-socket.on("connect_error", (err) => addSystem("Erro de conexão: " + err.message));
+  socket.on("connect_error", (err) => addSystem("Erro de conexão: " + err.message));
 
-socket.on("room-info", (info) => {
-  myId   = info.yourId;
-  isHost = info.isHost;
-  addSystem(`Sala pronta · ${isHost ? "Você é o host" : "Você é viewer"}`);
-  setupMedia(info.type, info.media);
-});
+  socket.on("room-info", (info) => {
+    myId        = info.yourId;
+    isHost      = info.isHost;
+    onlineCount = info.userCount || 1;
+    updateCountDisplay();
+    addSystem(`Sala pronta · ${isHost ? "Você é o host" : "Você é viewer"}`);
+    setupMedia(info.type, info.media);
+  });
 
-socket.on("room-error", (msg) => showError(msg));
-socket.on("host-left",  () => {
-  errorText.textContent = "O host encerrou a sessão. Esta sala foi fechada.";
-  errorOverlay.style.display = "flex";
-  setTimeout(() => { window.location.href = "/"; }, 4000);
-});
+  socket.on("room-error", (msg) => showError(msg));
 
-// Host transfer — só acontece em salas de screenshare
-socket.on("host-promoted", ({ message }) => {
-  isHost = true;
-  addSystem(`👑 ${message}`);
-  // Mostra o botão de compartilhar tela para o novo host
-  shareBtn.style.display = "block";
-});
+  socket.on("host-left", () => {
+    errorText.textContent = "O host encerrou a sessão. Esta sala foi fechada.";
+    errorOverlay.style.display = "flex";
+    setTimeout(() => { window.location.href = "/"; }, 4000);
+  });
 
-socket.on("host-changed", ({ newHostId }) => {
-  addSystem(`👑 Novo host: ${newHostId.slice(0, 6)}`);
-});
-socket.on("chat-message", addMessage);
-socket.on("user-joined", () => { updateCount(1);  addSystem("Um usuário entrou."); });
-socket.on("user-left",   () => { updateCount(-1); addSystem("Um usuário saiu."); });
+  socket.on("host-promoted", ({ message }) => {
+    isHost = true;
+    addSystem(`👑 ${message}`);
+    shareBtn.style.display = "block";
+  });
 
-function updateCount(delta) {
-  onlineCount = Math.max(1, onlineCount + delta);
+  socket.on("host-changed", ({ newHostId, newHostName }) => {
+    addSystem(`👑 Novo host: ${esc(newHostName || newHostId.slice(0, 6))}`);
+  });
+
+  socket.on("chat-message", addMessage);
+
+  socket.on("user-joined", ({ socketId, name: joinName, userCount }) => {
+    onlineCount = userCount || onlineCount + 1;
+    updateCountDisplay();
+    addSystem(`${esc(joinName || socketId.slice(0, 6))} entrou na sala.`);
+    // WebRTC: host manda offer para novo viewer se estiver compartilhando
+    if (localStream) sendOffer(socketId);
+  });
+
+  socket.on("user-left", ({ socketId, name: leftName, userCount }) => {
+    onlineCount = userCount || Math.max(1, onlineCount - 1);
+    updateCountDisplay();
+    addSystem(`${esc(leftName || socketId.slice(0, 6))} saiu da sala.`);
+    if (peers[socketId]) {
+      peers[socketId].close();
+      delete peers[socketId];
+    }
+  });
+
+  // Notificação para o host quando novo viewer entra na sala de filme
+  socket.on("viewer-joined-notify", ({ name: viewerName }) => {
+    // Só relevante para salas de filme/série (o host precisa sincronizar manualmente)
+    const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
+    const btn = document.getElementById("sync-btn");
+    if (!btn) return; // não é sala de iframe
+    const displayName = esc(viewerName && viewerName !== "anon" ? viewerName : "Alguém");
+    addSystem(`👤 ${displayName} entrou — clique 📍 Sync para sincronizar (você está em ${formatTime(elapsed)}).`);
+    // Pulsa o botão de sync em amarelo por 5s para chamar atenção
+    btn.style.background = "#f39c12";
+    btn.style.color = "#000";
+    setTimeout(() => {
+      btn.style.background = "#2ecc71";
+    }, 5000);
+  });
+
+  // Indicador de "digitando"
+  const typingUsers = new Map();
+  socket.on("user-typing", ({ socketId, name: typingName }) => {
+    typingUsers.set(socketId, typingName || socketId.slice(0, 6));
+    updateTypingIndicator(typingUsers);
+  });
+  socket.on("user-stop-typing", ({ socketId }) => {
+    typingUsers.delete(socketId);
+    updateTypingIndicator(typingUsers);
+  });
+}
+
+function updateCountDisplay() {
   userCountEl.textContent = `${onlineCount} online`;
+}
+
+function updateTypingIndicator(typingUsers) {
+  let el = document.getElementById("typing-indicator");
+  if (typingUsers.size === 0) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "typing-indicator";
+    el.className = "msg system";
+    messagesEl.appendChild(el);
+  }
+  const names = [...typingUsers.values()].slice(0, 3).map(esc);
+  el.textContent = names.join(", ") + (typingUsers.size === 1 ? " está digitando…" : " estão digitando…");
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 // ── Media router ──────────────────────────────────────────────────────────────
@@ -103,11 +227,12 @@ function setupMedia(type, media) {
 let iframeSources  = [];
 let currentSrcIdx  = 0;
 let currentIframe  = null;
-// Timestamp relativo ao momento em que o iframe foi carregado (não temos acesso ao currentTime)
 let iframeLoadedAt = 0;
 
 async function setupIframePlayer(type, media) {
-  // Busca fontes do servidor
+  // Atualiza o título da aba com o conteúdo da sala
+  document.title = `📺 ${media.title}${media.season ? ` S${media.season}E${media.episode}` : ""} — Watch Party`;
+
   let sources;
   try {
     const res = await fetch(`/api/embed/${roomId}`);
@@ -128,20 +253,24 @@ async function setupIframePlayer(type, media) {
   iframeSources = sources;
   currentSrcIdx = 0;
 
-  // Painel de controle — barra superior (já carrega o primeiro iframe internamente)
   buildIframeBar(media);
 
-  // Viewers recebem sync do host
-  socket.on("iframe-sync", ({ time, sourceIdx }) => {
-    if (isHost) return; // host não aplica o próprio sync
-    currentSrcIdx  = sourceIdx || 0;
-    iframeLoadedAt = Date.now() - (time * 1000);
-    loadIframe(currentSrcIdx);
-    addSystem(`🔄 Sincronizado com o host.`);
+  // Recebe sync do host (manual ou auto-sync ao entrar na sala)
+  socket.on("iframe-sync", ({ time, sourceIdx, autoSync }) => {
+    if (isHost) return;
+    const t = time || 0;
+    const label = autoSync ? "⚡ Sincronizado automaticamente" : "🔄 Sincronizado com o host";
+    loadIframe(sourceIdx || 0, t);
+    addSystem(`${label}${t > 5 ? ` em ${formatTime(t)}` : ""}.`);
   });
 }
 
-function loadIframe(idx) {
+/**
+ * Carrega o iframe de um provider com seek opcional via parâmetro de URL.
+ * @param {number} idx - índice em iframeSources
+ * @param {number} startAtSeconds - timestamp em segundos (0 = início)
+ */
+function loadIframe(idx, startAtSeconds = 0) {
   if (!iframeSources[idx]) return;
   currentSrcIdx = idx;
 
@@ -149,54 +278,57 @@ function loadIframe(idx) {
     currentIframe.remove();
     currentIframe = null;
   }
-  // Cancela watchdog anterior se houver
   if (window._iframeWatchdog) { clearTimeout(window._iframeWatchdog); window._iframeWatchdog = null; }
 
+  // Injeta parâmetro de seek dependendo do provider
+  let url = iframeSources[idx].url;
+  if (startAtSeconds > 5) {
+    const sep = url.includes("?") ? "&" : "?";
+    if (url.includes("moviesnexus")) {
+      url += `${sep}startAt=${startAtSeconds}`;
+    } else if (url.includes("vidcore")) {
+      url += `${sep}t=${startAtSeconds}`;
+    }
+    // vidsrc.to e vidsrc.cc não suportam seek por URL — viewer começa do início
+  }
+
   const iframe = document.createElement("iframe");
-  iframe.src             = iframeSources[idx].url;
+  iframe.src             = url;
   iframe.allowFullscreen = true;
   iframe.allow           = "autoplay; fullscreen; encrypted-media; picture-in-picture";
   iframe.style.cssText   = "width:100%;height:100%;border:none;display:block;background:#000;";
 
   mediaEl.appendChild(iframe);
   currentIframe  = iframe;
-  iframeLoadedAt = Date.now();
+  // Ajusta iframeLoadedAt para que o timer do host reflita o tempo correto
+  iframeLoadedAt = Date.now() - (startAtSeconds * 1000);
 
-  addSystem(`▶ ${iframeSources[idx].provider} · ${iframeSources[idx].label || "Auto"}`);
+  const seekLabel = startAtSeconds > 5 ? ` · ⏩ ${formatTime(startAtSeconds)}` : "";
+  addSystem(`▶ ${iframeSources[idx].provider} · ${iframeSources[idx].label || "Auto"}${seekLabel}`);
 
-  // Watchdog: se o iframe não carregar em 14s, tenta o próximo do mesmo grupo
+  // Watchdog: se o iframe não responder em 14s, tenta próximo do mesmo grupo
+  const baseUrl = iframeSources[idx].url.split("?")[0];
   window._iframeWatchdog = setTimeout(() => {
-    // Verifica se o iframe ainda está mostrando a página de erro (blank/grey)
-    // Como não temos acesso cross-origin, detectamos pelo src ainda igual ao original
-    if (currentIframe && currentIframe.src === iframeSources[idx].url) {
+    if (currentIframe && currentIframe.src.startsWith(baseUrl)) {
       const nextInGroup = iframeSources
         .map((s, i) => ({ ...s, i }))
         .filter((s) => s.lang === iframeSources[idx].lang && s.i !== idx);
       if (nextInGroup.length > 0) {
         addSystem(`⏱ Sem resposta — tentando ${nextInGroup[0].provider}…`);
-        loadIframe(nextInGroup[0].i);
+        loadIframe(nextInGroup[0].i, startAtSeconds);
       }
     }
   }, 14000);
 }
 
 // Bloqueia popups e navegação indesejada dos players.
-// Sobrescreve window.open globalmente — qualquer tentativa de abrir nova aba
-// (ads, redirecionamentos de phishing) é interceptada e descartada.
 (function blockPopups() {
   const _open = window.open.bind(window);
   window.open = function (url, target, features) {
-    // Permite apenas fullscreen interno do player (sem url = chamada legítima)
     if (!url) return _open(url, target, features);
-    // Bloqueia qualquer tentativa de abrir nova aba/janela
     console.warn("[security] window.open bloqueado:", url);
     return null;
   };
-
-  // Bloqueia redirecionamentos top-level via location
-  window.addEventListener("beforeunload", (e) => {
-    // Permite reload normal, bloqueia navegação para URLs externas inesperadas
-  });
 })();
 
 function buildIframeBar(media) {
@@ -209,31 +341,33 @@ function buildIframeBar(media) {
     font-size:12px;color:#fff;min-height:36px;
   `;
 
-  // Título do conteúdo
   const title = document.createElement("span");
-  title.textContent = media.title
-    + (media.season ? ` · S${media.season}E${media.episode}` : "");
+  title.textContent = media.title + (media.season ? ` · S${media.season}E${media.episode}` : "");
   title.style.cssText = "opacity:0.65;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;";
   bar.appendChild(title);
 
-  // Separador
   const sep = document.createElement("span");
   sep.textContent = "·";
   sep.style.opacity = "0.3";
   bar.appendChild(sep);
 
-  // Botões por grupo de idioma
-  // Agrupa: dub, leg, auto
   const groups = [
-    { key: "dub",  label: "🇧🇷 DUB",     color: "#e74c3c", title: "Dublado PT-BR" },
-    { key: "leg",  label: "🇧🇷 LEG",     color: "#3498db", title: "Legendado PT-BR" },
-    { key: "auto", label: "EN/Auto",      color: "#555",    title: "Inglês / Automático" },
+    { key: "dub",  label: "🇧🇷 DUB",  color: "#e74c3c", title: "Dublado PT-BR" },
+    { key: "leg",  label: "🇧🇷 LEG",  color: "#3498db", title: "Legendado PT-BR" },
+    { key: "auto", label: "EN/Auto",   color: "#555",    title: "Inglês / Automático" },
   ];
 
-  // Índice ativo no grupo de lang selecionado
+  let activeGroupKey = null;
   const groupIdx = { dub: 0, leg: 0, auto: 0 };
 
-  // Cria um botão por grupo — ao clicar, roda pelos sources daquele grupo
+  function activateGroup(key, color) {
+    activeGroupKey = key;
+    bar.querySelectorAll("[data-lang-group]").forEach((b) => {
+      const g = groups.find((g) => g.key === b.dataset.langGroup);
+      b.style.background = (b.dataset.langGroup === key) ? (g?.color || color) : "transparent";
+    });
+  }
+
   groups.forEach(({ key, label, color, title: ttip }) => {
     const srcs = iframeSources.filter((s) => s.lang === key);
     if (!srcs.length) return;
@@ -242,22 +376,15 @@ function buildIframeBar(media) {
     btn.dataset.langGroup = key;
     btn.textContent = label;
     btn.title = ttip;
-    const isActive = key === "dub"; // DUB ativo por padrão
+    const isDefault = key === "dub";
     btn.style.cssText = `
       padding:3px 9px;border:1px solid ${color};
-      background:${isActive ? color : "transparent"};
+      background:${isDefault ? color : "transparent"};
       color:#fff;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;
     `;
 
     btn.addEventListener("click", () => {
-      // Desativa todos os grupos
-      bar.querySelectorAll("[data-lang-group]").forEach((b) => {
-        const g = groups.find((g) => g.key === b.dataset.langGroup);
-        if (g) b.style.background = "transparent";
-      });
-      // Ativa este
-      btn.style.background = color;
-      // Carrega próxima source deste grupo (roda entre os do mesmo grupo)
+      activateGroup(key, color);
       const groupSrcs = iframeSources.map((s, i) => ({ ...s, idx: i })).filter((s) => s.lang === key);
       const next = groupSrcs[groupIdx[key] % groupSrcs.length];
       groupIdx[key] = (groupIdx[key] + 1) % groupSrcs.length;
@@ -267,12 +394,27 @@ function buildIframeBar(media) {
     bar.appendChild(btn);
   });
 
-  // Espaçador flexível
+  // Spacer
   const spacer = document.createElement("div");
   spacer.style.flex = "1";
   bar.appendChild(spacer);
 
-  // Botão Sync — só o host vê
+  // Botão fullscreen
+  const fsBtn = document.createElement("button");
+  fsBtn.textContent = "⛶";
+  fsBtn.title = "Fullscreen";
+  fsBtn.style.cssText = `
+    padding:3px 8px;background:transparent;color:#fff;font-size:14px;
+    border:1px solid #555;border-radius:4px;cursor:pointer;white-space:nowrap;
+  `;
+  fsBtn.addEventListener("click", () => {
+    const target = currentIframe || mediaEl;
+    if (target.requestFullscreen) target.requestFullscreen();
+    else if (target.webkitRequestFullscreen) target.webkitRequestFullscreen();
+  });
+  bar.appendChild(fsBtn);
+
+  // Botão Sync — só o host vê; viewers veem o hint "aguardando"
   if (isHost) {
     const syncBtn = document.createElement("button");
     syncBtn.id = "sync-btn";
@@ -281,15 +423,26 @@ function buildIframeBar(media) {
     syncBtn.style.cssText = `
       padding:3px 12px;background:#2ecc71;color:#000;font-weight:700;
       border:none;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;
+      transition:background 0.3s;
     `;
     syncBtn.addEventListener("click", () => {
       const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
       socket.emit("iframe-sync", { time: elapsed, sourceIdx: currentSrcIdx });
       addSystem(`📍 Sync enviado (${formatTime(elapsed)} desde o início).`);
       syncBtn.textContent = "✅";
+      syncBtn.style.background = "#2ecc71";
       setTimeout(() => { syncBtn.textContent = "📍 Sync"; }, 2000);
     });
     bar.appendChild(syncBtn);
+
+    // Timer: atualiza o title do botão Sync com a posição atual a cada 5s
+    setInterval(() => {
+      const el = document.getElementById("sync-btn");
+      if (!el) return;
+      const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
+      el.title = `Posição atual: ${formatTime(elapsed)} — clique para sincronizar todos`;
+    }, 5000);
+
   } else {
     const hint = document.createElement("span");
     hint.textContent = "⏳ aguardando host";
@@ -304,6 +457,8 @@ function buildIframeBar(media) {
   // Carrega o primeiro DUB disponível por padrão
   const firstDub = iframeSources.findIndex((s) => s.lang === "dub");
   loadIframe(firstDub >= 0 ? firstDub : 0);
+  if (firstDub >= 0) activateGroup("dub", "#e74c3c");
+  else activateGroup("auto", "#555");
 }
 
 // ── YouTube (IFrame API + sync) ───────────────────────────────────────────────
@@ -312,6 +467,9 @@ let ytReady    = false;
 let suppressYT = false;
 
 function setupYouTube(videoId) {
+  // Atualiza título da aba para salas de YouTube também
+  document.title = `▶ YouTube Watch Party`;
+
   const placeholder = document.createElement("div");
   placeholder.id = "yt-player";
   placeholder.style.cssText = "width:100%;height:100%;";
@@ -360,6 +518,7 @@ const ICE = { iceServers: [
 
 function setupScreenshare() {
   if (rtcSetup) return; rtcSetup = true;
+  document.title = "🖥️ Screen Share — Watch Party";
   setupRTCSignaling();
   shareBtn.style.display = "block";
   shareBtn.addEventListener("click", startShare);
@@ -367,6 +526,7 @@ function setupScreenshare() {
 
 function setupRTCViewer() {
   if (rtcSetup) return; rtcSetup = true;
+  document.title = "🖥️ Screen Share — Watch Party";
   setupRTCSignaling();
   addSystem("Aguardando stream do host…");
   setTimeout(() => socket.emit("rtc-request-stream"), 800);
@@ -374,7 +534,6 @@ function setupRTCViewer() {
 
 function setupRTCSignaling() {
   socket.on("rtc-request-stream", ({ from }) => { if (localStream) sendOffer(from); });
-  socket.on("user-joined", ({ socketId }) => { if (localStream) sendOffer(socketId); });
 
   socket.on("rtc-offer", async ({ from, sdp }) => {
     addSystem("Recebendo stream…");

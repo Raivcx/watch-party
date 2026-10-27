@@ -21,29 +21,26 @@ const io         = new Server(httpServer, {
 const PORT       = process.env.PORT || 3000;
 const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 
+// Validação básica de UUID v4
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 app.use(express.json());
 app.use(express.static(join(__dirname, "public")));
 
-// Bloqueia abertura de popups e navegação indesejada pelos iframes dos players.
+// Security headers
 app.use((req, res, next) => {
-  // Impede que a página seja carregada em iframes de outros sites (clickjacking)
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
-  // Bloqueia detecção de MIME type incorreto
   res.setHeader("X-Content-Type-Options", "nosniff");
-  // Referrer mínimo — não vaza URL para os players externos
   res.setHeader("Referrer-Policy", "strict-origin");
-  // CSP: a página da sala não pode abrir popups nem ser embedada externamente.
-  // Os iframes dos players são cross-origin e têm CSP próprio —
-  // este header protege apenas o nosso documento raiz.
   if (req.path.startsWith("/room/") || req.path === "/") {
     res.setHeader(
       "Content-Security-Policy",
       [
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com",
-        "frame-src *",                 // permite iframes dos players
-        "connect-src 'self' wss: ws:", // socket.io
-        "img-src 'self' data: https:", // thumbnails
+        "frame-src *",
+        "connect-src 'self' wss: ws:",
+        "img-src 'self' data: https:",
         "style-src 'self' 'unsafe-inline'",
       ].join("; ")
     );
@@ -51,18 +48,20 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check — Render + UptimeRobot keep-alive
+// Health check
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now(), rooms: getRoomCount() }));
 
 // REST: room metadata
 app.get("/api/room/:id", (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: "Invalid room ID" });
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: "Room not found" });
   res.json({ id: room.id, type: room.type, media: room.media, createdAt: room.createdAt });
 });
 
-// REST: retorna fontes de embed VidSrc para uma sala de filme/série
+// REST: embed sources
 app.get("/api/embed/:roomId", (req, res) => {
+  if (!UUID_RE.test(req.params.roomId)) return res.status(400).json({ error: "Invalid room ID" });
   const room = getRoom(req.params.roomId);
   if (!room) return res.status(404).json({ error: "Room not found" });
   if (room.type !== "movie" && room.type !== "serie") {
@@ -77,7 +76,7 @@ app.get("/api/embed/:roomId", (req, res) => {
   res.json({ sources, media: room.media });
 });
 
-// Proxy legendas — contorna CORS
+// Proxy legendas
 app.get("/api/sub-proxy", async (req, res) => {
   const target = req.query.url;
   if (!target) return res.status(400).send("Missing url");
@@ -98,40 +97,110 @@ app.get("/room/:id", (_req, res) => {
 });
 
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
+
+// Rate limit por socket: máximo 10 msgs em 10 segundos
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_MS  = 10_000;
+
 io.on("connection", (socket) => {
-  let currentRoomId = null;
+  let currentRoomId  = null;
+  let userName       = "anon";
+  let msgTimestamps  = [];
   console.log(`[socket] connected: ${socket.id}`);
 
   socket.on("join-room", (roomId) => {
+    // Valida formato UUID
+    if (!UUID_RE.test(String(roomId || ""))) {
+      socket.emit("room-error", "Invalid room ID format.");
+      return;
+    }
     const room = getRoom(roomId);
     console.log(`[socket] join-room ${roomId} => found=${!!room}`);
     if (!room) {
       socket.emit("room-error", "Room does not exist or has expired.");
       return;
     }
+
     currentRoomId = roomId;
     socket.join(roomId);
     room.userCount++;
-    socket.to(roomId).emit("user-joined", { socketId: socket.id });
+
+    // Fix race condition: define host ANTES de emitir room-info
+    const isHost = !room.hostSocketId;
+    if (isHost) room.hostSocketId = socket.id;
+
+    const userCount = room.userCount;
+
+    socket.to(roomId).emit("user-joined", {
+      socketId: socket.id,
+      name: userName,
+      userCount,
+    });
+
     socket.emit("room-info", {
       type:       room.type,
       media:      room.media,
       yourId:     socket.id,
-      hostUserId: room.hostSocketId || null,
-      isHost:     room.hostSocketId === socket.id || !room.hostSocketId,
+      hostUserId: room.hostSocketId,
+      isHost,
+      userCount,
     });
-    if (!room.hostSocketId) room.hostSocketId = socket.id;
-    console.log(`[socket] room-info sent to ${socket.id}: type=${room.type}`);
+
+    // Se há estado de sync salvo (host já sincronizou antes), envia direto para o viewer
+    // O tempo é ajustado com o tempo decorrido desde o último sync
+    if (!isHost && room.syncState) {
+      const elapsed = Math.floor((Date.now() - room.syncState.savedAt) / 1000);
+      const adjustedTime = room.syncState.time + elapsed;
+      socket.emit("iframe-sync", {
+        time: adjustedTime,
+        sourceIdx: room.syncState.sourceIdx,
+        autoSync: true,
+      });
+      console.log(`[socket] auto-sync viewer ${socket.id}: t=${adjustedTime}s src=${room.syncState.sourceIdx}`);
+    }
+
+    // Notifica o host que um novo viewer entrou (para ele poder sincronizar manualmente se quiser)
+    if (!isHost && room.hostSocketId) {
+      io.to(room.hostSocketId).emit("viewer-joined-notify", {
+        socketId: socket.id,
+        name: userName,
+      });
+    }
+
+    console.log(`[socket] room-info sent to ${socket.id}: type=${room.type} host=${isHost}`);
   });
 
   // Chat
-  socket.on("chat-message", ({ text }) => {
+  socket.on("chat-message", ({ text, name }) => {
     if (!currentRoomId || !text) return;
+
+    // Rate limit server-side
+    const now = Date.now();
+    msgTimestamps = msgTimestamps.filter((t) => now - t < RATE_LIMIT_MS);
+    if (msgTimestamps.length >= RATE_LIMIT_MAX) return; // silently drop
+    msgTimestamps.push(now);
+
+    // Atualiza o nome do usuário se foi passado
+    if (name && typeof name === "string") {
+      userName = String(name).slice(0, 20);
+    }
+
     io.to(currentRoomId).emit("chat-message", {
       socketId: socket.id,
+      name: userName,
       text: String(text).slice(0, 500),
       ts: Date.now(),
     });
+  });
+
+  // Indicador de digitando — só repassa para outros na sala
+  socket.on("typing-start", () => {
+    if (!currentRoomId) return;
+    socket.to(currentRoomId).emit("user-typing", { socketId: socket.id, name: userName });
+  });
+  socket.on("typing-stop", () => {
+    if (!currentRoomId) return;
+    socket.to(currentRoomId).emit("user-stop-typing", { socketId: socket.id });
   });
 
   // YouTube sync
@@ -140,13 +209,14 @@ io.on("connection", (socket) => {
     socket.to(currentRoomId).emit("yt-action", { action, time, from: socket.id });
   });
 
-  // Iframe sync — host envia timestamp em segundos; viewers recarregam iframe
-  // Só o host pode emitir; servidor valida antes de repassar
+  // Iframe sync — só o host pode emitir; persiste o estado para viewers futuros
   socket.on("iframe-sync", ({ time, sourceIdx }) => {
     if (!currentRoomId) return;
     const room = getRoom(currentRoomId);
     if (!room || room.hostSocketId !== socket.id) return;
     const t = Math.max(0, Math.floor(Number(time) || 0));
+    // Salva o estado para viewers que ainda vão entrar na sala
+    room.syncState = { time: t, sourceIdx: sourceIdx || 0, savedAt: Date.now() };
     socket.to(currentRoomId).emit("iframe-sync", { time: t, sourceIdx: sourceIdx || 0 });
     console.log(`[socket] iframe-sync t=${t}s src=${sourceIdx} room=${currentRoomId}`);
   });
@@ -165,11 +235,13 @@ io.on("connection", (socket) => {
     const room = getRoom(currentRoomId);
     if (!room) return;
 
+    // Para de digitar ao desconectar
+    socket.to(currentRoomId).emit("user-stop-typing", { socketId: socket.id });
+
     room.userCount = Math.max(0, room.userCount - 1);
 
     if (room.hostSocketId === socket.id) {
       if (room.type === "screenshare" && room.userCount > 0) {
-        // Screenshare: transfere o host para outro viewer em vez de destruir a sala
         const sockets = io.sockets.adapter.rooms.get(currentRoomId);
         const nextHostId = sockets
           ? [...sockets].find((sid) => sid !== socket.id)
@@ -177,23 +249,26 @@ io.on("connection", (socket) => {
 
         if (nextHostId) {
           room.hostSocketId = nextHostId;
+          const userCount = room.userCount;
           io.to(nextHostId).emit("host-promoted", { message: "Você é o novo host da sala." });
-          socket.to(currentRoomId).emit("host-changed", { newHostId: nextHostId });
+          socket.to(currentRoomId).emit("host-changed", { newHostId: nextHostId, newHostName: null, userCount });
           console.log(`[room] host transferred to ${nextHostId} in ${currentRoomId}`);
         } else {
-          // Sala ficou vazia mesmo assim
           io.to(currentRoomId).emit("host-left");
           deleteRoom(currentRoomId);
           console.log(`[room] ${currentRoomId} destroyed (no viewers left)`);
         }
       } else {
-        // Outros tipos (movie, serie, youtube): host sai = sala encerra
         io.to(currentRoomId).emit("host-left");
         deleteRoom(currentRoomId);
         console.log(`[room] ${currentRoomId} destroyed (host left)`);
       }
     } else {
-      socket.to(currentRoomId).emit("user-left", { socketId: socket.id });
+      socket.to(currentRoomId).emit("user-left", {
+        socketId: socket.id,
+        name: userName,
+        userCount: room.userCount,
+      });
     }
   });
 });

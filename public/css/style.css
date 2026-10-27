@@ -219,3 +219,71 @@ body {
   #media-panel { flex: 0 0 55%; }
   #chat-panel { flex: 1; min-width: 0; }
 }
+
+/* ── Name modal ───────────────────────────────────────────────────────────── */
+#name-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+#name-modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 32px;
+  border-radius: 12px;
+  text-align: center;
+  max-width: 360px;
+  width: 90%;
+}
+
+#name-modal-box h2 {
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
+#name-modal-box p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+#name-form {
+  display: flex;
+  gap: 8px;
+}
+
+#name-input {
+  flex: 1;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+#name-input:focus { border-color: var(--accent); }
+
+#name-form button {
+  padding: 10px 18px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+#name-form button:hover { background: var(--accent-hover); }
+
+/* ── Typing indicator ─────────────────────────────────────────────────────── */
+#typing-indicator {
+  font-style: italic;
+  opacity: 0.7;
+}
