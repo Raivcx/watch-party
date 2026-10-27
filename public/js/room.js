@@ -167,40 +167,59 @@ function ptbrBadge(stream) {
 function loadStream(stream, video) {
   addSystem(`Carregando: ${stream.title || stream.quality || "stream"}`);
 
-  // Passa a URL pelo proxy do servidor para evitar erros de CORS
-  const proxyUrl = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
+  // Monta URL do proxy passando o Referer correto do provider
+  // Alguns providers (VidLink, 4KHDHub) exigem Referer específico do próprio site
+  const providerReferer = getProviderReferer(stream);
+  const proxyUrl = (url) => {
+    const p = `/api/proxy?url=${encodeURIComponent(url)}`;
+    return providerReferer ? `${p}&ref=${encodeURIComponent(providerReferer)}` : p;
+  };
 
-  const src = stream.url.includes(".m3u8")
-    ? proxyUrl(stream.url)   // HLS via proxy
-    : stream.url;            // MP4 direto (geralmente sem CORS)
+  if (video._hls) { video._hls.destroy(); video._hls = null; }
 
   if (stream.url.includes(".m3u8")) {
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      // Safari — suporte nativo, mas ainda precisa do proxy p/ CORS
+      // Safari — suporte HLS nativo via proxy
       video.src = proxyUrl(stream.url);
     } else if (window.Hls && Hls.isSupported()) {
-      if (video._hls) { video._hls.destroy(); video._hls = null; }
-      const hls = new Hls({
-        enableWorker: true,
-        xhrSetup: (xhr, url) => {
-          // HLS.js já usa a URL reescrita pelo proxy, nada extra necessário
-        },
-      });
+      const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
       hls.loadSource(proxyUrl(stream.url));
       hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        addSystem("Stream pronto.");
+      });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
-          addSystem(`HLS erro fatal (${data.type}) — tentando próxima fonte…`);
+          addSystem(`Erro HLS (${data.type}) — tente outra qualidade.`);
+          console.error("[hls]", data);
         }
       });
       video._hls = hls;
     } else {
-      addSystem("Seu browser não suporta HLS. Tente Chrome/Firefox.");
+      addSystem("Seu browser não suporta HLS. Use Chrome ou Firefox.");
     }
   } else {
-    // MP4 direto
-    video.src = stream.url;
+    // MP4 direto — passa pelo proxy para Range requests e CORS
+    video.src = proxyUrl(stream.url);
   }
+}
+
+/**
+ * Retorna o Referer correto para um dado provider/stream.
+ * Necessário para providers que validam a origem da requisição.
+ */
+function getProviderReferer(stream) {
+  const name = (stream.provider || stream.name || stream.title || "").toLowerCase();
+  if (/vidlink/.test(name))      return "https://vidlink.pro/";
+  if (/4khdhub/.test(name))      return "https://4khdhub.com/";
+  if (/videasy/.test(name))      return "https://player.videasy.net/";
+  if (/streamflix/.test(name))   return "https://streamflix.space/";
+  if (/dahmermovies/.test(name)) return "https://dahmermovies.com/";
+  if (/vixsrc/.test(name))       return "https://vixsrc.to/";
+  if (/castletv/.test(name))     return "https://castle.club/";
+  if (/netmirror/.test(name))    return "https://netmirror.app/";
+  if (/zxcstreams/.test(name))   return "https://zxcstreams.com/";
+  return null;
 }
 
 function buildQualityBar(streams, video, media) {

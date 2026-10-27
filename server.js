@@ -57,8 +57,8 @@ app.get("/api/room/:id", (req, res) => {
   res.json({ id: room.id, type: room.type, media: room.media, createdAt: room.createdAt });
 });
 
-// Proxy HLS/MP4 — contorna CORS dos servidores de stream
-// O browser chama /api/proxy?url=<encoded> e o servidor busca server-side
+// Proxy HLS/MP4 — contorna CORS e suporta Range requests para seek
+// O browser chama /api/proxy?url=<encoded>&ref=<encoded_referer>
 app.get("/api/proxy", async (req, res) => {
   const target = req.query.url;
   if (!target) return res.status(400).send("Missing url param");
@@ -71,41 +71,82 @@ app.get("/api/proxy", async (req, res) => {
     return res.status(400).send("Invalid url");
   }
 
+  // Referer customizado passado pelo cliente (cada provider tem o seu)
+  const customReferer = req.query.ref ? decodeURIComponent(req.query.ref) : null;
+  const referer = customReferer || targetUrl.origin + "/";
+
+  // Repassa Range header se existir (necessário para seek em MP4)
+  const upstreamHeaders = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer":    referer,
+    "Origin":     new URL(referer).origin,
+    "Accept":     "*/*",
+  };
+  if (req.headers["range"]) {
+    upstreamHeaders["Range"] = req.headers["range"];
+  }
+
   try {
     const upstream = await fetch(targetUrl.toString(), {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": targetUrl.origin + "/",
-        "Origin": targetUrl.origin,
-      },
-      signal: AbortSignal.timeout(20000),
+      headers: upstreamHeaders,
+      signal: AbortSignal.timeout(30000),
     });
 
-    if (!upstream.ok) {
+    if (!upstream.ok && upstream.status !== 206) {
+      console.error(`[proxy] upstream ${upstream.status} for ${targetUrl.hostname}`);
       return res.status(upstream.status).send(`Upstream error: ${upstream.status}`);
     }
 
     const ct = upstream.headers.get("content-type") || "application/octet-stream";
+
+    // Repassa headers relevantes
     res.setHeader("Content-Type", ct);
     res.setHeader("Access-Control-Allow-Origin", "*");
+    if (upstream.headers.get("content-length")) {
+      res.setHeader("Content-Length", upstream.headers.get("content-length"));
+    }
+    if (upstream.headers.get("content-range")) {
+      res.setHeader("Content-Range", upstream.headers.get("content-range"));
+    }
+    if (upstream.headers.get("accept-ranges")) {
+      res.setHeader("Accept-Ranges", "bytes");
+    }
+    res.status(upstream.status);
 
-    // Para .m3u8: reescreve as URLs dos segmentos para passar pelo proxy também
+    // Para .m3u8: reescreve as URLs dos segmentos para passar pelo proxy
     if (ct.includes("mpegurl") || target.includes(".m3u8")) {
       const text = await upstream.text();
       const base = target.substring(0, target.lastIndexOf("/") + 1);
-      const rewritten = text.replace(/^(?!#)(.+\.ts|.+\.m3u8|.+\.key)([^\S\r\n]*$)/gm, (match, seg) => {
-        const segUrl = seg.startsWith("http") ? seg : base + seg;
-        return `/api/proxy?url=${encodeURIComponent(segUrl)}`;
-      });
+      const refParam = `&ref=${encodeURIComponent(referer)}`;
+      const rewritten = text.replace(
+        /^(?!#)([^\r\n]+)$/gm,
+        (seg) => {
+          seg = seg.trim();
+          if (!seg) return seg;
+          const segUrl = seg.startsWith("http") ? seg : base + seg;
+          return `/api/proxy?url=${encodeURIComponent(segUrl)}${refParam}`;
+        }
+      );
       return res.send(rewritten);
     }
 
-    // Para MP4/segmentos: pipe direto
-    const buf = await upstream.arrayBuffer();
-    return res.send(Buffer.from(buf));
+    // Para MP4/TS: pipe direto sem bufferizar na memória
+    const reader = upstream.body.getReader();
+    const pump = async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) { res.end(); break; }
+        const ok = res.write(Buffer.from(value));
+        if (!ok) await new Promise((r) => res.once("drain", r));
+      }
+    };
+    req.on("close", () => reader.cancel());
+    await pump();
   } catch (err) {
-    console.error("[proxy] error:", err.message);
-    res.status(502).send("Proxy error: " + err.message);
+    if (!res.headersSent) {
+      console.error("[proxy] error:", err.message);
+      res.status(502).send("Proxy error: " + err.message);
+    }
   }
 });
 
