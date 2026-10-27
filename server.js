@@ -1,11 +1,12 @@
-// Main server: Express (static + REST) + Socket.IO (chat, WebRTC signaling)
+// Main server: Express (static + REST) + Socket.IO (chat, YT sync, WebRTC signaling)
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { getRoom, deleteRoom } from "./lib/roomStore.js";
+import { createRoom, getRoom } from "./lib/roomStore.js";
+import { getStreams } from "./lib/streams.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,22 +24,44 @@ const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 app.use(express.json());
 app.use(express.static(join(__dirname, "public")));
 
-// Health check — used by Render + UptimeRobot to keep the free tier alive
+// Health check (used by Render + UptimeRobot to keep the free tier awake)
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
-// REST: room metadata (only screenshare rooms are created server-side now)
+// REST: room metadata
 app.get("/api/room/:id", (req, res) => {
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: "Room not found" });
-  res.json({
-    id: room.id,
-    type: room.type,
-    media: room.media,
-    createdAt: room.createdAt,
-  });
+  res.json({ id: room.id, type: room.type, media: room.media, createdAt: room.createdAt });
 });
 
-// Catch-all: serve the room page for screenshare rooms
+// REST: fetch streams for a room from TMDB-Embed-API (called by the frontend)
+// Returns the first working stream URL + subtitle list.
+app.get("/api/streams/:roomId", async (req, res) => {
+  const room = getRoom(req.params.roomId);
+  if (!room) return res.status(404).json({ error: "Room not found" });
+  if (room.type !== "movie" && room.type !== "serie") {
+    return res.status(400).json({ error: "Not a movie/serie room" });
+  }
+
+  // Cache streams in the room object to avoid refetching on every join
+  if (room.streams) return res.json(room.streams);
+
+  try {
+    const streams = await getStreams({
+      type: room.type,
+      tmdbId: room.media.tmdbId,
+      season: room.media.season,
+      episode: room.media.episode,
+    });
+    room.streams = streams; // cache
+    res.json(streams);
+  } catch (err) {
+    console.error("[streams] fetch error:", err.message);
+    res.status(502).json({ error: "Stream fetch failed", detail: err.message });
+  }
+});
+
+// Catch-all: serve the room page
 app.get("/room/:id", (_req, res) => {
   res.sendFile(join(__dirname, "public", "room.html"));
 });
@@ -46,9 +69,11 @@ app.get("/room/:id", (_req, res) => {
 // --- Socket.IO ---
 io.on("connection", (socket) => {
   let currentRoomId = null;
+  console.log(`[socket] connected: ${socket.id}`);
 
   socket.on("join-room", (roomId) => {
     const room = getRoom(roomId);
+    console.log(`[socket] join-room ${roomId} => found=${!!room}`);
     if (!room) {
       socket.emit("room-error", "Room does not exist or has expired.");
       return;
@@ -61,10 +86,12 @@ io.on("connection", (socket) => {
       type: room.type,
       media: room.media,
       yourId: socket.id,
+      hostUserId: room.hostSocketId || null, // set when host joins
       isHost: room.hostSocketId === socket.id || !room.hostSocketId,
     });
     // First joiner becomes the host socket
     if (!room.hostSocketId) room.hostSocketId = socket.id;
+    console.log(`[socket] room-info sent to ${socket.id}: type=${room.type}`);
   });
 
   // Chat
@@ -77,35 +104,51 @@ io.on("connection", (socket) => {
     });
   });
 
-  // WebRTC signaling (screenshare)
-  socket.on("rtc-offer", ({ to, sdp }) =>
-    io.to(to).emit("rtc-offer", { from: socket.id, sdp }),
-  );
-  socket.on("rtc-answer", ({ to, sdp }) =>
-    io.to(to).emit("rtc-answer", { from: socket.id, sdp }),
-  );
-  socket.on("rtc-ice", ({ to, candidate }) =>
-    io.to(to).emit("rtc-ice", { from: socket.id, candidate }),
-  );
+  // YouTube sync
+  socket.on("yt-action", ({ action, time }) => {
+    if (!currentRoomId) return;
+    socket.to(currentRoomId).emit("yt-action", { action, time, from: socket.id });
+  });
+
+  // Pomfy manual sync (host → viewers)
+  socket.on("pomfy-sync", ({ action, time }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room || room.hostSocketId !== socket.id) return; // only host can sync
+    socket.to(currentRoomId).emit("pomfy-sync", { action, time });
+  });
+
+  // Video sync — HLS/MP4 player (host → viewers, real play/pause/seek)
+  socket.on("video-sync", ({ action, time }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room || room.hostSocketId !== socket.id) return; // only host syncs
+    socket.to(currentRoomId).emit("video-sync", { action, time });
+  });
+
+  // WebRTC signaling
+  socket.on("rtc-offer",  ({ to, sdp })       => io.to(to).emit("rtc-offer",  { from: socket.id, sdp }));
+  socket.on("rtc-answer", ({ to, sdp })       => io.to(to).emit("rtc-answer", { from: socket.id, sdp }));
+  socket.on("rtc-ice",    ({ to, candidate }) => io.to(to).emit("rtc-ice",    { from: socket.id, candidate }));
   socket.on("rtc-request-stream", () => {
-    if (currentRoomId)
-      socket.to(currentRoomId).emit("rtc-request-stream", { from: socket.id });
+    if (currentRoomId) socket.to(currentRoomId).emit("rtc-request-stream", { from: socket.id });
   });
 
   socket.on("disconnect", () => {
-    if (!currentRoomId) return;
-    const room = getRoom(currentRoomId);
-    if (!room) return;
-
-    room.userCount = Math.max(0, room.userCount - 1);
-
-    if (room.hostSocketId === socket.id) {
-      // Host left — notify all viewers and destroy the room
-      io.to(currentRoomId).emit("host-left");
-      deleteRoom(currentRoomId);
-      console.log(`[room] ${currentRoomId} destroyed (host left)`);
-    } else {
-      socket.to(currentRoomId).emit("user-left", { socketId: socket.id });
+    console.log(`[socket] disconnected: ${socket.id}`);
+    if (currentRoomId) {
+      const room = getRoom(currentRoomId);
+      if (room) {
+        room.userCount = Math.max(0, room.userCount - 1);
+        if (room.hostSocketId === socket.id) {
+          // Host left — notify all viewers and destroy the room
+          io.to(currentRoomId).emit("host-left");
+          deleteRoom(currentRoomId);
+          console.log(`[room] ${currentRoomId} destroyed (host left)`);
+        } else {
+          socket.to(currentRoomId).emit("user-left", { socketId: socket.id });
+        }
+      }
     }
   });
 });
