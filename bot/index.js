@@ -17,14 +17,13 @@ import {
 import { searchTitle } from "../lib/tmdb.js";
 import { extractYouTubeId } from "../lib/youtube.js";
 import { createRoom } from "../lib/roomStore.js";
-import { createW2GRoom } from "../lib/watch2gether.js";
 import { commands } from "./commands.js";
 
-// Warn early about missing env vars — helps debug Render deployments
+// Warn early about missing env vars
 if (!process.env.DISCORD_TOKEN) console.error("[bot] DISCORD_TOKEN is not set!");
 if (!process.env.CLIENT_ID)     console.error("[bot] CLIENT_ID is not set!");
 if (!process.env.TMDB_API_KEY)  console.warn("[bot] TMDB_API_KEY is not set — /watch will fail.");
-if (!process.env.W2G_API_KEY)   console.warn("[bot] W2G_API_KEY is not set — /watch will fail.");
+if (!process.env.EMBED_API_URL) console.warn("[bot] EMBED_API_URL is not set — movie/serie streams will fail.");
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -32,8 +31,8 @@ const client = new Client({
 
 const PUBLIC_URL = process.env.PUBLIC_URL || "http://localhost:3000";
 
-// Auto-register slash commands on startup.
-// Uses guild commands (per-server) — appear instantly vs up to 1h for global.
+// Auto-register guild slash commands on startup.
+// Guild commands appear instantly vs up to 1h for global.
 client.once(Events.ClientReady, async (c) => {
   console.log(`[bot] Discord bot online as ${c.user.tag}`);
   try {
@@ -53,12 +52,8 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Handle modal submits separately — they are not chat input commands
-  if (interaction.isModalSubmit()) {
-    // awaitModalSubmit handles these; nothing to do here
-    return;
-  }
-
+  // Modal submits are handled by awaitModalSubmit — ignore here
+  if (interaction.isModalSubmit()) return;
   if (!interaction.isChatInputCommand()) return;
 
   console.log(`[bot] Command received: /${interaction.commandName}`);
@@ -73,7 +68,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (err) {
     console.error(`[bot] Unhandled error in /${interaction.commandName}:`, err);
-    // Only attempt error reply if we haven't already shown a modal
     const payload = { content: "Something went wrong. Please try again.", ephemeral: true };
     try {
       if (interaction.deferred || interaction.replied) {
@@ -82,20 +76,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply(payload);
       }
     } catch {
-      // Interaction already expired or modal was shown — nothing we can do
+      // Interaction already expired or modal was shown
     }
   }
 });
 
 // --- /watch <type> <name> ---
-// Searches TMDB for metadata, then creates a Watch2Gether room.
-// For series: shows a Discord Modal to collect season/episode first.
+// Busca metadados no TMDB, cria sala interna e retorna link do player com HLS.
 async function handleWatch(interaction) {
   const type = interaction.options.getString("type"); // movie | serie
   const name = interaction.options.getString("name");
 
   if (type === "serie") {
-    // Modal MUST be the first response — cannot defer before showing it
+    // Modal DEVE ser a primeira resposta — não pode defer antes
     const modal = new ModalBuilder()
       .setCustomId(`serie-ep:${name}`)
       .setTitle("Season & Episode");
@@ -125,8 +118,6 @@ async function handleWatch(interaction) {
 
     await interaction.showModal(modal);
 
-    // awaitModalSubmit is NOT inside the InteractionCreate try/catch scope —
-    // timeout is silent (user just closed the modal), any other error propagates up.
     let modalInteraction;
     try {
       modalInteraction = await interaction.awaitModalSubmit({
@@ -135,12 +126,10 @@ async function handleWatch(interaction) {
         time: 5 * 60 * 1000,
       });
     } catch {
-      // User dismissed the modal or it timed out — no reply needed
       console.log("[bot] Modal timed out or dismissed.");
       return;
     }
 
-    // Defer modal reply while we do async work
     await modalInteraction.deferReply();
 
     const season  = parseInt(modalInteraction.fields.getTextInputValue("season"),  10) || 1;
@@ -158,25 +147,19 @@ async function handleWatch(interaction) {
       return modalInteraction.editReply(`No results found for "**${name}**".`);
     }
 
-    const ytQuery = encodeURIComponent(`${result.title} season ${season} episode ${episode}`);
-    const seedUrl = `https://www.youtube.com/results?search_query=${ytQuery}`;
+    const room = createRoom({
+      type: "serie",
+      media: { ...result, season, episode },
+      hostUserId: interaction.user.id,
+    });
 
-    let w2gRoomUrl;
-    try {
-      w2gRoomUrl = await createW2GRoom(seedUrl);
-    } catch (err) {
-      console.error("[bot] W2G createRoom failed:", err.message);
-      return modalInteraction.editReply(
-        `Couldn't create the Watch2Gether room: ${err.message}`,
-      );
-    }
+    const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
 
     const embed = new EmbedBuilder()
       .setTitle(`Watch Party — ${result.title}`)
-      .setDescription(`📺 ${result.title} S${season}E${episode}\n\nClick below to join the synced room.`)
-      .setURL(w2gRoomUrl)
-      .setColor(0x5865f2)
-      .setFooter({ text: "Powered by Watch2Gether" });
+      .setDescription(`📺 ${result.title} S${season}E${episode}\n\nClique no botão para entrar na sala.`)
+      .setURL(roomUrl)
+      .setColor(0x5865f2);
 
     if (result.poster)   embed.setThumbnail(result.poster);
     if (result.overview) embed.addFields({ name: "Overview", value: result.overview.slice(0, 300) });
@@ -185,13 +168,13 @@ async function handleWatch(interaction) {
       embeds: [embed],
       components: [
         new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(w2gRoomUrl),
+          new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
         ),
       ],
     });
   }
 
-  // Movies: defer immediately then do async work
+  // Filmes: defer e busca TMDB
   await interaction.deferReply();
 
   let result;
@@ -206,25 +189,19 @@ async function handleWatch(interaction) {
     return interaction.editReply(`No results found for "**${name}**".`);
   }
 
-  const ytQuery = encodeURIComponent(`${result.title} ${result.year} full movie`);
-  const seedUrl = `https://www.youtube.com/results?search_query=${ytQuery}`;
+  const room = createRoom({
+    type: "movie",
+    media: { ...result },
+    hostUserId: interaction.user.id,
+  });
 
-  let w2gRoomUrl;
-  try {
-    w2gRoomUrl = await createW2GRoom(seedUrl);
-  } catch (err) {
-    console.error("[bot] W2G createRoom failed:", err.message);
-    return interaction.editReply(
-      `Couldn't create the Watch2Gether room: ${err.message}`,
-    );
-  }
+  const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
 
   const embed = new EmbedBuilder()
     .setTitle(`Watch Party — ${result.title}`)
-    .setDescription(`🎬 ${result.title} (${result.year})\n\nClick below to join the synced room.`)
-    .setURL(w2gRoomUrl)
-    .setColor(0x5865f2)
-    .setFooter({ text: "Powered by Watch2Gether" });
+    .setDescription(`🎬 ${result.title} (${result.year})\n\nClique no botão para entrar na sala.`)
+    .setURL(roomUrl)
+    .setColor(0x5865f2);
 
   if (result.poster)   embed.setThumbnail(result.poster);
   if (result.overview) embed.addFields({ name: "Overview", value: result.overview.slice(0, 300) });
@@ -233,15 +210,15 @@ async function handleWatch(interaction) {
     embeds: [embed],
     components: [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(w2gRoomUrl),
+        new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
       ),
     ],
   });
 }
 
-// --- /yt <link> --- (unchanged from original)
+// --- /yt <link> ---
 async function handleYouTube(interaction) {
-  const link = interaction.options.getString("link");
+  const link    = interaction.options.getString("link");
   const videoId = extractYouTubeId(link);
 
   if (!videoId) {
@@ -261,19 +238,22 @@ async function handleYouTube(interaction) {
 
   const embed = new EmbedBuilder()
     .setTitle("📺 YouTube Watch Party")
-    .setDescription("Click the button to join the synced room.")
+    .setDescription("Clique no botão para entrar na sala sincronizada.")
     .setURL(roomUrl)
     .setColor(0xff0000)
     .setThumbnail(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`);
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
-  );
-
-  return interaction.reply({ embeds: [embed], components: [row] });
+  return interaction.reply({
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
+      ),
+    ],
+  });
 }
 
-// --- /screenshare --- (unchanged from original)
+// --- /screenshare ---
 async function handleScreenshare(interaction) {
   const room = createRoom({
     type: "screenshare",
@@ -285,15 +265,18 @@ async function handleScreenshare(interaction) {
 
   const embed = new EmbedBuilder()
     .setTitle("🖥️ Screen Share Room")
-    .setDescription("Click the button to join.\nThe host will be prompted to share their screen.")
+    .setDescription("Clique no botão para entrar.\nO host compartilhará a tela via WebRTC.")
     .setURL(roomUrl)
     .setColor(0x2ecc71);
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
-  );
-
-  return interaction.reply({ embeds: [embed], components: [row] });
+  return interaction.reply({
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
+      ),
+    ],
+  });
 }
 
 // Start the bot
