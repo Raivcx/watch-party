@@ -590,12 +590,22 @@ function setupRTCSignaling() {
   });
 }
 
+let _sharingInProgress = false;
+
 async function startShare() {
+  // Evita múltiplas chamadas simultâneas (duplo-clique, listener duplicado)
+  if (_sharingInProgress) return;
+  _sharingInProgress = true;
+
   try {
-    // Fecha todas as peer connections antigas antes de criar novas
+    // Fecha peer connections antigas antes de criar novas
     closeAllPeers();
 
     localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+
+    // Remove vídeo antigo se ainda existir no DOM
+    cleanupScreenVideo();
+
     const video = document.createElement("video");
     video.id = "screen-video";
     video.autoplay = true; video.playsInline = true; video.muted = true;
@@ -610,11 +620,21 @@ async function startShare() {
 
     localStream.getVideoTracks()[0].onended = () => {
       video.remove(); localStream = null;
+      _sharingInProgress = false;
       closeAllPeers();
       shareBtn.style.display = "block";
       addSystem("Compartilhamento encerrado.");
     };
-  } catch { addSystem("Permissão negada ou falhou."); }
+  } catch (err) {
+    _sharingInProgress = false;
+    // NotAllowedError = usuário cancelou o picker ou negou permissão
+    if (err.name === "NotAllowedError") {
+      addSystem("Compartilhamento cancelado.");
+    } else {
+      addSystem(`Erro ao compartilhar: ${err.message || err.name}`);
+      console.error("[screenshare]", err);
+    }
+  }
 }
 
 async function sendOffer(peerId) {
@@ -665,6 +685,7 @@ function showError(msg) {
   errorText.textContent = msg;
   errorOverlay.style.display = "flex";
 }
+
 
 
 
