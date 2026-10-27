@@ -676,6 +676,27 @@ function newPC(peerId, isHostPeer) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Remove o elemento #screen-video do DOM, para as tracks e limpa srcObject. */
+function cleanupScreenVideo() {
+  const v = document.getElementById("screen-video");
+  if (v) {
+    if (v.srcObject) {
+      v.srcObject.getTracks().forEach((t) => t.stop());
+      v.srcObject = null;
+    }
+    v.remove();
+  }
+}
+
+/** Fecha e remove todas as RTCPeerConnections abertas. */
+function closeAllPeers() {
+  for (const id of Object.keys(peers)) {
+    peers[id].close();
+    delete peers[id];
+  }
+}
+
 function formatTime(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
@@ -685,6 +706,7 @@ function showError(msg) {
   errorText.textContent = msg;
   errorOverlay.style.display = "flex";
 }
+
 
 
 
