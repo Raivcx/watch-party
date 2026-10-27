@@ -279,7 +279,12 @@ async function handleScreenshare(interaction) {
   });
 }
 
-// Start the bot
-client.login(process.env.DISCORD_TOKEN);
+// Start the bot — wrapped in try/catch para não derrubar o servidor HTTP se o token for inválido
+try {
+  await client.login(process.env.DISCORD_TOKEN);
+} catch (err) {
+  console.error("[bot] Failed to login to Discord:", err.message);
+  console.error("[bot] Check DISCORD_TOKEN in environment variables. The HTTP server will continue running.");
+}
 
 export default client;
