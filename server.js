@@ -1,4 +1,4 @@
-// Main server: Express (static + REST) + Socket.IO (chat, YT sync, WebRTC signaling)
+// Main server: Express (static + REST) + Socket.IO (chat, YT sync, iframe sync, WebRTC)
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
@@ -6,7 +6,7 @@ import { Server } from "socket.io";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { createRoom, getRoom, deleteRoom } from "./lib/roomStore.js";
-import { getStreams } from "./lib/streams.js";
+import { getEmbedSources } from "./lib/streams.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -27,29 +27,6 @@ app.use(express.static(join(__dirname, "public")));
 // Health check — Render + UptimeRobot keep-alive
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
-// Diagnóstico: testa se a TMDB-Embed-API está respondendo
-// Acesse /api/embed-health no browser para ver o status
-app.get("/api/embed-health", async (_req, res) => {
-  const base = process.env.EMBED_API_URL;
-  if (!base) {
-    return res.json({ ok: false, error: "EMBED_API_URL not set in environment variables" });
-  }
-  try {
-    const start = Date.now();
-    // Testa com o filme "Fight Club" (tmdbId 550) como canário
-    const response = await fetch(`${base}/api/streams/movie/550`, { signal: AbortSignal.timeout(30000) });
-    const ms = Date.now() - start;
-    if (!response.ok) {
-      return res.json({ ok: false, status: response.status, ms, base });
-    }
-    const data = await response.json();
-    const count = Array.isArray(data) ? data.length : (data.streams?.length ?? 0);
-    res.json({ ok: true, ms, streamsFound: count, base });
-  } catch (err) {
-    res.json({ ok: false, error: err.message, base });
-  }
-});
-
 // REST: room metadata
 app.get("/api/room/:id", (req, res) => {
   const room = getRoom(req.params.id);
@@ -57,100 +34,23 @@ app.get("/api/room/:id", (req, res) => {
   res.json({ id: room.id, type: room.type, media: room.media, createdAt: room.createdAt });
 });
 
-// Proxy HLS/MP4 — contorna CORS e suporta Range requests para seek
-// O browser chama /api/proxy?url=<encoded>&ref=<encoded_referer>
-app.get("/api/proxy", async (req, res) => {
-  const target = req.query.url;
-  if (!target) return res.status(400).send("Missing url param");
-
-  let targetUrl;
-  try {
-    targetUrl = new URL(target);
-    if (!["http:", "https:"].includes(targetUrl.protocol)) throw new Error("bad protocol");
-  } catch {
-    return res.status(400).send("Invalid url");
+// REST: retorna fontes de embed VidSrc para uma sala de filme/série
+app.get("/api/embed/:roomId", (req, res) => {
+  const room = getRoom(req.params.roomId);
+  if (!room) return res.status(404).json({ error: "Room not found" });
+  if (room.type !== "movie" && room.type !== "serie") {
+    return res.status(400).json({ error: "Not a movie/serie room" });
   }
-
-  // Referer customizado passado pelo cliente (cada provider tem o seu)
-  const customReferer = req.query.ref ? decodeURIComponent(req.query.ref) : null;
-  const referer = customReferer || targetUrl.origin + "/";
-
-  // Repassa Range header se existir (necessário para seek em MP4)
-  const upstreamHeaders = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer":    referer,
-    "Origin":     new URL(referer).origin,
-    "Accept":     "*/*",
-  };
-  if (req.headers["range"]) {
-    upstreamHeaders["Range"] = req.headers["range"];
-  }
-
-  try {
-    const upstream = await fetch(targetUrl.toString(), {
-      headers: upstreamHeaders,
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (!upstream.ok && upstream.status !== 206) {
-      console.error(`[proxy] upstream ${upstream.status} for ${targetUrl.hostname}`);
-      return res.status(upstream.status).send(`Upstream error: ${upstream.status}`);
-    }
-
-    const ct = upstream.headers.get("content-type") || "application/octet-stream";
-
-    // Repassa headers relevantes
-    res.setHeader("Content-Type", ct);
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    if (upstream.headers.get("content-length")) {
-      res.setHeader("Content-Length", upstream.headers.get("content-length"));
-    }
-    if (upstream.headers.get("content-range")) {
-      res.setHeader("Content-Range", upstream.headers.get("content-range"));
-    }
-    if (upstream.headers.get("accept-ranges")) {
-      res.setHeader("Accept-Ranges", "bytes");
-    }
-    res.status(upstream.status);
-
-    // Para .m3u8: reescreve as URLs dos segmentos para passar pelo proxy
-    if (ct.includes("mpegurl") || target.includes(".m3u8")) {
-      const text = await upstream.text();
-      const base = target.substring(0, target.lastIndexOf("/") + 1);
-      const refParam = `&ref=${encodeURIComponent(referer)}`;
-      const rewritten = text.replace(
-        /^(?!#)([^\r\n]+)$/gm,
-        (seg) => {
-          seg = seg.trim();
-          if (!seg) return seg;
-          const segUrl = seg.startsWith("http") ? seg : base + seg;
-          return `/api/proxy?url=${encodeURIComponent(segUrl)}${refParam}`;
-        }
-      );
-      return res.send(rewritten);
-    }
-
-    // Para MP4/TS: pipe direto sem bufferizar na memória
-    const reader = upstream.body.getReader();
-    const pump = async () => {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) { res.end(); break; }
-        const ok = res.write(Buffer.from(value));
-        if (!ok) await new Promise((r) => res.once("drain", r));
-      }
-    };
-    req.on("close", () => reader.cancel());
-    await pump();
-  } catch (err) {
-    if (!res.headersSent) {
-      console.error("[proxy] error:", err.message);
-      res.status(502).send("Proxy error: " + err.message);
-    }
-  }
+  const sources = getEmbedSources({
+    type:    room.type,
+    tmdbId:  room.media.tmdbId,
+    season:  room.media.season,
+    episode: room.media.episode,
+  });
+  res.json({ sources, media: room.media });
 });
 
-// Proxy legendas — mesmo problema de CORS
+// Proxy legendas — contorna CORS
 app.get("/api/sub-proxy", async (req, res) => {
   const target = req.query.url;
   if (!target) return res.status(400).send("Missing url");
@@ -159,36 +59,9 @@ app.get("/api/sub-proxy", async (req, res) => {
     const ct = upstream.headers.get("content-type") || "text/vtt";
     res.setHeader("Content-Type", ct);
     res.setHeader("Access-Control-Allow-Origin", "*");
-    const text = await upstream.text();
-    res.send(text);
+    res.send(await upstream.text());
   } catch (err) {
     res.status(502).send("Sub proxy error: " + err.message);
-  }
-});
-
-// REST: busca streams na TMDB-Embed-API para uma sala (chamado pelo frontend)
-app.get("/api/streams/:roomId", async (req, res) => {
-  const room = getRoom(req.params.roomId);
-  if (!room) return res.status(404).json({ error: "Room not found" });
-  if (room.type !== "movie" && room.type !== "serie") {
-    return res.status(400).json({ error: "Not a movie/serie room" });
-  }
-
-  // Cache para evitar refetch a cada join
-  if (room.streams) return res.json(room.streams);
-
-  try {
-    const streams = await getStreams({
-      type:    room.type,
-      tmdbId:  room.media.tmdbId,
-      season:  room.media.season,
-      episode: room.media.episode,
-    });
-    room.streams = streams;
-    res.json(streams);
-  } catch (err) {
-    console.error("[streams] fetch error:", err.message);
-    res.status(502).json({ error: "Stream fetch failed", detail: err.message });
   }
 });
 
@@ -240,20 +113,15 @@ io.on("connection", (socket) => {
     socket.to(currentRoomId).emit("yt-action", { action, time, from: socket.id });
   });
 
-  // Pomfy manual sync (host → viewers)
-  socket.on("pomfy-sync", ({ action, time }) => {
+  // Iframe sync — host envia timestamp em segundos; viewers recarregam iframe
+  // Só o host pode emitir; servidor valida antes de repassar
+  socket.on("iframe-sync", ({ time, sourceIdx }) => {
     if (!currentRoomId) return;
     const room = getRoom(currentRoomId);
     if (!room || room.hostSocketId !== socket.id) return;
-    socket.to(currentRoomId).emit("pomfy-sync", { action, time });
-  });
-
-  // Video sync — HLS/MP4 player (host → viewers)
-  socket.on("video-sync", ({ action, time }) => {
-    if (!currentRoomId) return;
-    const room = getRoom(currentRoomId);
-    if (!room || room.hostSocketId !== socket.id) return;
-    socket.to(currentRoomId).emit("video-sync", { action, time });
+    const t = Math.max(0, Math.floor(Number(time) || 0));
+    socket.to(currentRoomId).emit("iframe-sync", { time: t, sourceIdx: sourceIdx || 0 });
+    console.log(`[socket] iframe-sync t=${t}s src=${sourceIdx} room=${currentRoomId}`);
   });
 
   // WebRTC signaling

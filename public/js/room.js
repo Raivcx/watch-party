@@ -1,19 +1,19 @@
 // Watch Party Room — Vanilla JS client
-// Media: HLS.js player (movie/serie), YouTube sync, WebRTC screenshare
+// Media: VidSrc iframe (movie/serie), YouTube IFrame API, WebRTC screenshare
 
 const socket = io({ transports: ["websocket", "polling"] });
 const roomId = window.location.pathname.split("/room/")[1]?.split("/")[0];
 
 if (!roomId) showError("No room ID in the URL.");
 
-const messagesEl  = document.getElementById("chat-messages");
-const chatForm    = document.getElementById("chat-form");
-const chatInput   = document.getElementById("chat-input");
-const userCountEl = document.getElementById("user-count");
-const mediaEl     = document.getElementById("media-container");
-const shareBtn    = document.getElementById("start-share-btn");
+const messagesEl   = document.getElementById("chat-messages");
+const chatForm     = document.getElementById("chat-form");
+const chatInput    = document.getElementById("chat-input");
+const userCountEl  = document.getElementById("user-count");
+const mediaEl      = document.getElementById("media-container");
+const shareBtn     = document.getElementById("start-share-btn");
 const errorOverlay = document.getElementById("error-overlay");
-const errorText   = document.getElementById("error-text");
+const errorText    = document.getElementById("error-text");
 
 let myId        = null;
 let isHost      = false;
@@ -31,7 +31,7 @@ chatForm.addEventListener("submit", (e) => {
 function addMessage({ socketId, text }) {
   const el = document.createElement("div");
   el.className = "msg" + (socketId === myId ? " self" : "");
-  el.innerHTML = `<div class="who">${socketId === myId ? "You" : socketId.slice(0,6)}</div>${esc(text)}`;
+  el.innerHTML = `<div class="who">${socketId === myId ? "You" : socketId.slice(0, 6)}</div>${esc(text)}`;
   messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -82,243 +82,145 @@ function updateCount(delta) {
 
 // ── Media router ──────────────────────────────────────────────────────────────
 function setupMedia(type, media) {
-  if      (type === "movie" || type === "serie") setupHLS(type, media);
+  if      (type === "movie" || type === "serie") setupIframePlayer(type, media);
   else if (type === "youtube")                   setupYouTube(media.videoId);
   else if (type === "screenshare")               isHost ? setupScreenshare() : setupRTCViewer();
 }
 
-// ── HLS Player (movie / serie via TMDB-Embed-API) ────────────────────────────
-let hlsVideo        = null;
-let suppressVideoEvents = false;
-let currentStreams   = [];
-let currentStreamIdx = 0;
+// ── VidSrc Iframe Player (movie / serie) ─────────────────────────────────────
+let iframeSources  = [];
+let currentSrcIdx  = 0;
+let currentIframe  = null;
+// Timestamp relativo ao momento em que o iframe foi carregado (não temos acesso ao currentTime)
+let iframeLoadedAt = 0;
 
-async function setupHLS(type, media) {
-  const loading = showLoadingOverlay("🔍 Buscando streams…");
-
-  let streams;
+async function setupIframePlayer(type, media) {
+  // Busca fontes do servidor
+  let sources;
   try {
-    const res = await fetch(`/api/streams/${roomId}`);
+    const res = await fetch(`/api/embed/${roomId}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
-    streams = Array.isArray(body) ? body : (body.streams || []);
+    sources = body.sources || [];
   } catch (err) {
-    loading.remove();
-    showNoStreamsOverlay(media);
-    addSystem("Erro ao buscar streams: " + err.message);
+    showError("Não foi possível carregar o player. Tente novamente.");
+    addSystem("Erro ao buscar fontes: " + err.message);
     return;
   }
 
-  if (!streams || streams.length === 0) {
-    loading.remove();
-    showNoStreamsOverlay(media);
-    addSystem("Nenhum stream encontrado para este título.");
+  if (!sources.length) {
+    showError("Nenhuma fonte de vídeo disponível.");
     return;
   }
 
-  loading.remove();
-  currentStreams    = streams;
-  currentStreamIdx = 0;
+  iframeSources = sources;
+  currentSrcIdx = 0;
 
-  const video = document.createElement("video");
-  video.id = "hls-video";
-  video.controls = true;
-  video.style.cssText = "width:100%;height:100%;background:#000;display:block;";
-  mediaEl.appendChild(video);
-  hlsVideo = video;
+  // Painel de controle — barra superior
+  buildIframeBar(media);
+  loadIframe(0);
 
-  addSystem(`▶ ${streams[0].title || streams[0].quality || "stream"} ${ptbrBadge(streams[0])}`.trim());
-
-  buildQualityBar(streams, video, media);
-  loadStream(streams[0], video);
-  setupVideoSync(video);
-
-  if (streams[0].subtitles?.length) {
-    attachSubtitles(video, streams[0].subtitles);
-  }
+  // Viewers recebem sync do host
+  socket.on("iframe-sync", ({ time, sourceIdx }) => {
+    if (isHost) return; // host não aplica o próprio sync
+    currentSrcIdx  = sourceIdx || 0;
+    iframeLoadedAt = Date.now() - (time * 1000);
+    loadIframe(currentSrcIdx);
+    addSystem(`🔄 Sincronizado com o host.`);
+  });
 }
 
-// Retorna badge PT-BR se detectado no stream
-function ptbrBadge(stream) {
-  if (!stream) return "";
-  const h = [stream.title || "", stream.name || "", stream.provider || ""].join(" ").toLowerCase();
-  if (/\b(dub(lado)?|dubbed|portugu[eê]s|pt[-_]?br|ptbr)\b/.test(h) && !/\b(leg|legenda|sub)\b/.test(h)) {
-    return "🇧🇷 DUB";
-  }
-  const hasPtbrSub = (stream.subtitles || []).some((s) =>
-    /portugu|pt[-_]?br|ptbr|brazil/i.test(s.lang || "")
-  );
-  return hasPtbrSub ? "🇧🇷 LEG" : "";
+function loadIframe(idx) {
+  if (!iframeSources[idx]) return;
+  currentSrcIdx = idx;
+
+  // Remove iframe anterior
+  if (currentIframe) currentIframe.remove();
+
+  const iframe = document.createElement("iframe");
+  iframe.src              = iframeSources[idx].url;
+  iframe.allowFullscreen  = true;
+  iframe.allow            = "autoplay; fullscreen; encrypted-media; picture-in-picture";
+  iframe.style.cssText    = "width:100%;height:100%;border:none;display:block;background:#000;";
+  mediaEl.appendChild(iframe);
+  currentIframe  = iframe;
+  iframeLoadedAt = Date.now();
+
+  addSystem(`▶ ${iframeSources[idx].provider} — fonte ${idx + 1}/${iframeSources.length}`);
 }
 
-function loadStream(stream, video) {
-  addSystem(`Carregando: ${stream.title || stream.quality || "stream"}`);
-
-  if (video._hls) { video._hls.destroy(); video._hls = null; }
-
-  const url = stream.url;
-
-  if (url.includes(".m3u8") || url.includes("m3u8-proxy")) {
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = url;
-    } else if (window.Hls && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
-      hls.loadSource(url);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        addSystem("✅ Stream pronto.");
-        video.play().catch(() => {});
-      });
-      hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
-          addSystem(`❌ Erro HLS (${data.type}) — tentando próxima fonte…`);
-          tryNextStream(video);
-        }
-      });
-      video._hls = hls;
-    } else {
-      addSystem("Seu browser não suporta HLS. Use Chrome ou Firefox.");
-    }
-  } else {
-    // MP4 direto
-    video.src = url;
-    video.load();
-    // Se após 8 segundos ainda não começou, tenta o próximo
-    const timer = setTimeout(() => {
-      if (video.readyState < 2) {
-        addSystem("⏱ Stream MP4 sem resposta — tentando próxima fonte…");
-        tryNextStream(video);
-      }
-    }, 8000);
-    video.addEventListener("canplay", () => clearTimeout(timer), { once: true });
-  }
-}
-
-function tryNextStream(video) {
-  currentStreamIdx++;
-  if (currentStreamIdx < currentStreams.length) {
-    const next = currentStreams[currentStreamIdx];
-    addSystem(`🔄 Tentando: ${next.title || next.quality || `fonte ${currentStreamIdx + 1}`}`);
-    loadStream(next, video);
-  } else {
-    addSystem("❌ Nenhuma fonte funcionou. Verifique a TMDB-Embed-API (ENABLE_PROXY=true no painel admin).");
-  }
-}
-
-function buildQualityBar(streams, video, media) {
+function buildIframeBar(media) {
   const bar = document.createElement("div");
+  bar.id = "iframe-bar";
   bar.style.cssText = `
-    position:absolute;top:0;right:0;z-index:20;
-    background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);
-    padding:6px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
-    font-size:12px;color:#fff;max-width:70%;
+    position:absolute;top:0;left:0;right:0;z-index:20;
+    background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);
+    padding:6px 12px;display:flex;gap:8px;align-items:center;
+    font-size:13px;color:#fff;
   `;
 
-  const label = document.createElement("span");
-  label.textContent = `${media.title}${media.season ? ` S${media.season}E${media.episode}` : ""} · `;
-  label.style.opacity = "0.7";
-  bar.appendChild(label);
+  // Título
+  const title = document.createElement("span");
+  title.textContent = media.title
+    + (media.season ? ` S${media.season}E${media.episode}` : "")
+    + " · ";
+  title.style.opacity = "0.7";
+  bar.appendChild(title);
 
-  streams.forEach((s, i) => {
-    const badge = ptbrBadge(s);
+  // Botões de fonte
+  iframeSources.forEach((src, i) => {
     const btn = document.createElement("button");
-    btn.textContent = `${s.quality || `#${i + 1}`}${badge ? " " + badge : ""}`;
+    btn.textContent = src.provider.replace("vidsrc.", "VidSrc ");
     btn.style.cssText = `
-      padding:3px 8px;border:1px solid ${badge ? "#2ecc71" : "#555"};
+      padding:3px 10px;border:1px solid #555;
       background:${i === 0 ? "#5865f2" : "transparent"};
       color:#fff;border-radius:4px;cursor:pointer;font-size:11px;
     `;
-    btn.title = s.title || s.provider || "";
     btn.addEventListener("click", () => {
-      loadStream(s, video);
-      video.querySelectorAll("track").forEach((t) => t.remove());
-      if (s.subtitles?.length) attachSubtitles(video, s.subtitles);
-      bar.querySelectorAll("button").forEach((b) => b.style.background = "transparent");
+      loadIframe(i);
+      bar.querySelectorAll("button.src-btn").forEach((b) => b.style.background = "transparent");
       btn.style.background = "#5865f2";
     });
+    btn.className = "src-btn";
     bar.appendChild(btn);
   });
 
-  mediaEl.style.position = "relative";
-  mediaEl.appendChild(bar);
-}
+  // Espaçador
+  const spacer = document.createElement("div");
+  spacer.style.flex = "1";
+  bar.appendChild(spacer);
 
-function showLoadingOverlay(msg) {
-  const el = document.createElement("div");
-  el.style.cssText = `
-    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-    color:#8b8ba0;font-size:16px;text-align:center;z-index:5;
-  `;
-  el.textContent = msg;
-  mediaEl.style.position = "relative";
-  mediaEl.appendChild(el);
-  return el;
-}
-
-function showNoStreamsOverlay(media) {
-  mediaEl.innerHTML = `
-    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-      text-align:center;padding:24px;max-width:420px;">
-      <div style="font-size:48px;margin-bottom:12px">😞</div>
-      <p style="color:#e8e8f0;font-size:16px;margin-bottom:6px;">
-        Nenhum stream disponível para<br><strong>${media.title || "este título"}</strong>
-      </p>
-      <p style="color:#8b8ba0;font-size:13px;">
-        Verifique se a TMDB-Embed-API está acessível (EMBED_API_URL no Render).
-      </p>
-    </div>`;
-}
-
-function attachSubtitles(video, subtitles) {
-  video.querySelectorAll("track").forEach((t) => t.remove());
-  const sorted = [...subtitles].sort((a, b) => subLangScore(b.lang) - subLangScore(a.lang));
-  sorted.forEach((sub, i) => {
-    const track = document.createElement("track");
-    track.kind    = "subtitles";
-    track.label   = sub.lang || "Subtitle";
-    track.srclang = (sub.lang || "pt").slice(0, 2).toLowerCase();
-    track.src     = `/api/sub-proxy?url=${encodeURIComponent(sub.url)}`;
-    track.default = i === 0;
-    video.appendChild(track);
-  });
-}
-
-function subLangScore(lang = "") {
-  if (/portugu|pt[-_]?br|ptbr|brazil/i.test(lang)) return 3;
-  if (/\bpt\b/i.test(lang))                         return 2;
-  if (/\ben\b|english/i.test(lang))                 return 1;
-  return 0;
-}
-
-// ── Video Sync (host → viewers) ───────────────────────────────────────────────
-function setupVideoSync(video) {
-  if (!video) return;
-
+  // Botão Sync (só para o host)
   if (isHost) {
-    video.addEventListener("play",   () => {
-      if (suppressVideoEvents) return;
-      socket.emit("video-sync", { action: "play",  time: video.currentTime });
+    const syncBtn = document.createElement("button");
+    syncBtn.id = "sync-btn";
+    syncBtn.textContent = "📍 Sincronizar";
+    syncBtn.title = "Envia sua posição atual para todos os viewers";
+    syncBtn.style.cssText = `
+      padding:4px 14px;background:#2ecc71;color:#000;font-weight:600;
+      border:none;border-radius:4px;cursor:pointer;font-size:12px;
+    `;
+    syncBtn.addEventListener("click", () => {
+      // Calcula quantos segundos o iframe está aberto
+      const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
+      socket.emit("iframe-sync", { time: elapsed, sourceIdx: currentSrcIdx });
+      addSystem(`📍 Sync enviado (${formatTime(elapsed)} desde o início).`);
+      syncBtn.textContent = "✅ Enviado!";
+      setTimeout(() => { syncBtn.textContent = "📍 Sincronizar"; }, 2000);
     });
-    video.addEventListener("pause",  () => {
-      if (suppressVideoEvents) return;
-      socket.emit("video-sync", { action: "pause", time: video.currentTime });
-    });
-    video.addEventListener("seeked", () => {
-      if (suppressVideoEvents) return;
-      socket.emit("video-sync", { action: "seek",  time: video.currentTime });
-    });
-    addSystem("Host: play/pause/seek são sincronizados.");
+    bar.appendChild(syncBtn);
+  } else {
+    const hint = document.createElement("span");
+    hint.textContent = "Aguardando sync do host…";
+    hint.style.cssText = "font-size:11px;color:#8b8ba0;";
+    bar.appendChild(hint);
   }
 
-  socket.on("video-sync", ({ action, time }) => {
-    if (!video) return;
-    suppressVideoEvents = true;
-    video.currentTime = time;
-    if (action === "play")  video.play().catch(() => {});
-    if (action === "pause") video.pause();
-    setTimeout(() => { suppressVideoEvents = false; }, 500);
-    if (!isHost) addSystem(`Sync: ${action} em ${formatTime(Math.floor(time))}`);
-  });
+  mediaEl.style.position = "relative";
+  mediaEl.appendChild(bar);
+
+  // Empurra o iframe para baixo da barra
+  mediaEl.style.paddingTop = "36px";
 }
 
 // ── YouTube (IFrame API + sync) ───────────────────────────────────────────────
@@ -408,7 +310,7 @@ function setupRTCSignaling() {
   socket.on("rtc-ice", async ({ from, candidate }) => {
     const pc = peers[from];
     if (!pc) return;
-    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch { /* late candidate */ }
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch { /* late */ }
   });
 }
 

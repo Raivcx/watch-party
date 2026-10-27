@@ -200,6 +200,19 @@ body {
   margin-bottom: 12px;
 }
 
+/* Iframe bar */
+#iframe-bar {
+  font-size: 13px;
+}
+
+#iframe-bar button.src-btn:hover {
+  background: var(--accent-hover) !important;
+}
+
+#sync-btn:hover {
+  background: #27ae60 !important;
+}
+
 /* Responsive */
 @media (max-width: 700px) {
   #app { flex-direction: column; }
