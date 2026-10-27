@@ -148,22 +148,37 @@ function initSocket() {
   socket.on("host-promoted", ({ message }) => {
     isHost = true;
     addSystem(`👑 ${message}`);
+
+    // Remove o vídeo da stream anterior que ainda pode estar no DOM
+    // (o viewer tinha o screen-video do host antigo montado via ontrack)
+    cleanupScreenVideo();
+
     // Viewer que vira host já passou por setupRTCViewer() que setou rtcSetup=true,
     // então setupScreenshare() retornaria imediatamente sem mostrar o botão.
-    // Aqui fazemos manualmente o que setupScreenshare() faria para um novo host:
-    // 1. Garante que o signaling está configurado (caso ainda não esteja)
+    // Fazemos manualmente: configura signaling se ainda não foi, mostra o botão.
     if (!rtcSetup) {
       rtcSetup = true;
       setupRTCSignaling();
     }
-    // 2. Mostra o botão de compartilhar tela e registra o click (sem duplicar)
-    shareBtn.removeEventListener("click", startShare); // remove caso já exista
+    shareBtn.removeEventListener("click", startShare);
     shareBtn.addEventListener("click", startShare);
     shareBtn.style.display = "block";
   });
 
   socket.on("host-changed", ({ newHostId, newHostName }) => {
     addSystem(`👑 Novo host: ${esc(newHostName || newHostId.slice(0, 6))}`);
+    // Limpa o vídeo antigo e aguarda nova stream do novo host
+    cleanupScreenVideo();
+    addSystem("⏳ Aguardando nova transmissão do host…");
+  });
+
+  // Novo host subiu stream — viewers limpam estado antigo e pedem a nova
+  socket.on("stream-started", () => {
+    if (isHost) return;
+    cleanupScreenVideo();
+    addSystem("🟢 Nova transmissão disponível, conectando…");
+    // Pequeno delay para o novo host terminar de configurar as tracks
+    setTimeout(() => socket.emit("rtc-request-stream"), 600);
   });
 
   socket.on("chat-message", addMessage);
@@ -577,6 +592,9 @@ function setupRTCSignaling() {
 
 async function startShare() {
   try {
+    // Fecha todas as peer connections antigas antes de criar novas
+    closeAllPeers();
+
     localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     const video = document.createElement("video");
     video.id = "screen-video";
@@ -586,8 +604,13 @@ async function startShare() {
     mediaEl.appendChild(video);
     shareBtn.style.display = "none";
     addSystem("Compartilhando sua tela.");
+
+    // Avisa todos os viewers que a nova stream está disponível
+    socket.emit("stream-started");
+
     localStream.getVideoTracks()[0].onended = () => {
       video.remove(); localStream = null;
+      closeAllPeers();
       shareBtn.style.display = "block";
       addSystem("Compartilhamento encerrado.");
     };
@@ -642,5 +665,6 @@ function showError(msg) {
   errorText.textContent = msg;
   errorOverlay.style.display = "flex";
 }
+
 
 

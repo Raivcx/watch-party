@@ -221,6 +221,13 @@ io.on("connection", (socket) => {
     console.log(`[socket] iframe-sync t=${t}s src=${sourceIdx} room=${currentRoomId}`);
   });
 
+  // WebRTC: novo host anuncia stream disponível — repassa para viewers da sala
+  socket.on("stream-started", () => {
+    if (!currentRoomId) return;
+    socket.to(currentRoomId).emit("stream-started");
+    console.log(`[socket] stream-started broadcast room=${currentRoomId}`);
+  });
+
   // WebRTC signaling
   socket.on("rtc-offer",  ({ to, sdp })       => io.to(to).emit("rtc-offer",  { from: socket.id, sdp }));
   socket.on("rtc-answer", ({ to, sdp })       => io.to(to).emit("rtc-answer", { from: socket.id, sdp }));
@@ -279,3 +286,4 @@ httpServer.listen(PORT, () => {
 
 // Inicia o bot Discord no mesmo processo
 import "./bot/index.js";
+
