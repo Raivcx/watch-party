@@ -145,14 +145,17 @@ function loadIframe(idx) {
   if (!iframeSources[idx]) return;
   currentSrcIdx = idx;
 
-  if (currentIframe) currentIframe.remove();
+  if (currentIframe) {
+    currentIframe.remove();
+    currentIframe = null;
+  }
+  // Cancela watchdog anterior se houver
+  if (window._iframeWatchdog) { clearTimeout(window._iframeWatchdog); window._iframeWatchdog = null; }
 
   const iframe = document.createElement("iframe");
   iframe.src             = iframeSources[idx].url;
   iframe.allowFullscreen = true;
   iframe.allow           = "autoplay; fullscreen; encrypted-media; picture-in-picture";
-  // Nota: sandbox removido — os players detectam sandbox e recusam carregar.
-  // Proteção contra popups é feita via window.open override abaixo.
   iframe.style.cssText   = "width:100%;height:100%;border:none;display:block;background:#000;";
 
   mediaEl.appendChild(iframe);
@@ -160,6 +163,21 @@ function loadIframe(idx) {
   iframeLoadedAt = Date.now();
 
   addSystem(`▶ ${iframeSources[idx].provider} · ${iframeSources[idx].label || "Auto"}`);
+
+  // Watchdog: se o iframe não carregar em 14s, tenta o próximo do mesmo grupo
+  window._iframeWatchdog = setTimeout(() => {
+    // Verifica se o iframe ainda está mostrando a página de erro (blank/grey)
+    // Como não temos acesso cross-origin, detectamos pelo src ainda igual ao original
+    if (currentIframe && currentIframe.src === iframeSources[idx].url) {
+      const nextInGroup = iframeSources
+        .map((s, i) => ({ ...s, i }))
+        .filter((s) => s.lang === iframeSources[idx].lang && s.i !== idx);
+      if (nextInGroup.length > 0) {
+        addSystem(`⏱ Sem resposta — tentando ${nextInGroup[0].provider}…`);
+        loadIframe(nextInGroup[0].i);
+      }
+    }
+  }, 14000);
 }
 
 // Bloqueia popups e navegação indesejada dos players.
