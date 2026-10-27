@@ -165,32 +165,27 @@ function ptbrBadge(stream) {
 }
 
 function loadStream(stream, video) {
-  addSystem(`Carregando: ${stream.title || stream.quality || "stream"}`);
-
-  // Monta URL do proxy passando o Referer correto do provider
-  // Alguns providers (VidLink, 4KHDHub) exigem Referer específico do próprio site
-  const providerReferer = getProviderReferer(stream);
-  const proxyUrl = (url) => {
-    const p = `/api/proxy?url=${encodeURIComponent(url)}`;
-    return providerReferer ? `${p}&ref=${encodeURIComponent(providerReferer)}` : p;
-  };
+  addSystem(`▶ ${stream.title || stream.quality || "stream"}`);
 
   if (video._hls) { video._hls.destroy(); video._hls = null; }
 
-  if (stream.url.includes(".m3u8")) {
+  const url = stream.url;
+
+  if (url.includes(".m3u8") || url.includes("m3u8-proxy")) {
+    // HLS stream
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      // Safari — suporte HLS nativo via proxy
-      video.src = proxyUrl(stream.url);
+      video.src = url; // Safari — suporte nativo
     } else if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
-      hls.loadSource(proxyUrl(stream.url));
+      hls.loadSource(url);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        addSystem("Stream pronto.");
+        addSystem("✅ Stream pronto.");
+        video.play().catch(() => {});
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
-          addSystem(`Erro HLS (${data.type}) — tente outra qualidade.`);
+          addSystem(`❌ Erro no stream (${data.type}) — tente outra fonte.`);
           console.error("[hls]", data);
         }
       });
@@ -199,27 +194,26 @@ function loadStream(stream, video) {
       addSystem("Seu browser não suporta HLS. Use Chrome ou Firefox.");
     }
   } else {
-    // MP4 direto — passa pelo proxy para Range requests e CORS
-    video.src = proxyUrl(stream.url);
+    // MP4 direto
+    video.src = url;
+    video.load();
   }
 }
 
 /**
- * Retorna o Referer correto para um dado provider/stream.
- * Necessário para providers que validam a origem da requisição.
+ * Retorna uma badge de texto indicando se o stream é dublado/legendado PT-BR.
  */
-function getProviderReferer(stream) {
-  const name = (stream.provider || stream.name || stream.title || "").toLowerCase();
-  if (/vidlink/.test(name))      return "https://vidlink.pro/";
-  if (/4khdhub/.test(name))      return "https://4khdhub.com/";
-  if (/videasy/.test(name))      return "https://player.videasy.net/";
-  if (/streamflix/.test(name))   return "https://streamflix.space/";
-  if (/dahmermovies/.test(name)) return "https://dahmermovies.com/";
-  if (/vixsrc/.test(name))       return "https://vixsrc.to/";
-  if (/castletv/.test(name))     return "https://castle.club/";
-  if (/netmirror/.test(name))    return "https://netmirror.app/";
-  if (/zxcstreams/.test(name))   return "https://zxcstreams.com/";
-  return null;
+function ptbrBadge(stream) {
+  if (!stream) return "";
+  const haystack = [stream.title || "", stream.name || "", stream.provider || ""].join(" ").toLowerCase();
+  if (/\b(dub(lado)?|dubbed|portugu[eê]s|pt[-_]?br|ptbr)\b/.test(haystack)) {
+    if (!/\b(leg|legenda|sub)\b/.test(haystack)) return "🇧🇷 DUB";
+  }
+  const hasPtbrSub = (stream.subtitles || []).some((s) =>
+    /portugu|pt[-_]?br|ptbr|brazil/i.test(s.lang || "")
+  );
+  if (hasPtbrSub) return "🇧🇷 LEG";
+  return "";
 }
 
 function buildQualityBar(streams, video, media) {
