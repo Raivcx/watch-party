@@ -10,7 +10,7 @@
   <div id="app">
     <div id="media-panel">
       <div id="media-container">
-        <!-- Media injected here: iframe (Pomfy), iframe (YT), or video (WebRTC) -->
+        <!-- WebRTC screenshare video injected here by room.js -->
       </div>
       <button id="start-share-btn" style="display:none">Start Screen Share</button>
     </div>
@@ -18,7 +18,7 @@
     <div id="chat-panel">
       <div id="chat-header">
         <h2>Watch Party Chat</h2>
-        <span id="user-count">0 online</span>
+        <span id="user-count">1 online</span>
       </div>
       <div id="chat-messages"></div>
       <form id="chat-form" autocomplete="off">
@@ -36,8 +36,6 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <!-- HLS.js for .m3u8 streams on browsers that don't support HLS natively -->
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
   <script type="module" src="/js/room.js"></script>
 </body>
 </html>

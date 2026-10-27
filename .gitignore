@@ -1,8 +1,77 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
 .env
-*.log
-npm-debug.log*
-.DS_Store
-.git/
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ── Build Artifacts ───────────────────────────────────────────────────────────
 dist/
 build/
+out/
+.cache/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Local Databases & Data ────────────────────────────────────────────────────
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+db/
+
+# ── Local Media & Downloads ───────────────────────────────────────────────────
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.m4v
+*.flv
+*.wmv
+*.m3u8
+*.ts
+*.mp3
+*.aac
+*.wav
+*.flac
+*.ogg
+media/
+downloads/
+videos/
+audio/
+
+# ── OS & Editor Noise ─────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Testing & Coverage ────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ── Render / CI Artifacts ─────────────────────────────────────────────────────
+.render-buildinfo.json

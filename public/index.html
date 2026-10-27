@@ -17,18 +17,25 @@
       text-align: center;
     }
     a { color: #5865f2; }
+    code {
+      background: #1a1a24;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
   <div>
     <h1>📺 Watch Party</h1>
-    <p>Use Discord commands to create a room:</p>
-    <ul style="list-style: none; padding: 0; line-height: 2;">
-      <li><code>/watch movie Inception</code></li>
-      <li><code>/watch serie Breaking Bad</code></li>
-      <li><code>/yt https://youtu.be/dQw4w9WgXcQ</code></li>
-      <li><code>/screenshare</code></li>
+    <p>Use Discord slash commands to create a synced room:</p>
+    <ul style="list-style: none; padding: 0; line-height: 2.4;">
+      <li><code>/watch url:https://youtu.be/dQw4w9WgXcQ</code> — YouTube video</li>
+      <li><code>/watch url:https://vimeo.com/123456789</code> — Vimeo video</li>
+      <li><code>/screenshare</code> — Real-time screen sharing (WebRTC)</li>
     </ul>
+    <p style="font-size: 13px; color: #8b8ba0; margin-top: 24px;">
+      Watch parties are powered by <a href="https://w2g.tv" target="_blank" rel="noopener">Watch2Gether</a>.
+    </p>
   </div>
 </body>
 </html>
