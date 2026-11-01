@@ -19,11 +19,9 @@ You need:
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**.
 2. Give it a name (e.g. "Watch Party Bot").
 3. Go to the **Bot** tab → **Add Bot** → copy the **Token**. This is `DISCORD_TOKEN`.
-4. Go to **OAuth2** → copy the **Client ID**. This is `CLIENT_ID`.
-5. Under **OAuth2 → URL Generator**, select:
-   - Scopes: `bot`, `applications.commands`
-   - Bot Permissions: `Send Messages`, `Embed Links`, `Read Message History`
-6. Open the generated URL and add the bot to your server.
+4. Go to **OAuth2 → General** and copy the **Client ID** (`CLIENT_ID`) and **Client Secret** (`DISCORD_CLIENT_SECRET`).
+5. Under **OAuth2 → Redirects**, add the exact web callback URL: `https://YOUR_HOST.onrender.com/auth/discord/callback`. Set the same value as `DISCORD_REDIRECT_URI` in Render after the first deploy.
+6. The web login uses only the `identify` scope. To invite the bot, use **OAuth2 → URL Generator** with scopes `bot` and `applications.commands`, plus permissions `Send Messages`, `Embed Links` and `Read Message History`. Open the generated URL and add the bot to your server.
 
 ---
 
@@ -151,7 +149,7 @@ CREATE TABLE rooms (
 |---------|-----|
 | Bot doesn't respond to commands | Run `npm run deploy-commands` again; check `DISCORD_TOKEN` and `CLIENT_ID` |
 | Room link shows "Room Unavailable" | Render restarted (free tier sleep). Create a new room from Discord. |
-| Pomfy player is blank | Pomfy API may be down; try another title. Some content may be region-locked. |
+| Discord login returns an OAuth error | Confirm `DISCORD_CLIENT_SECRET`, `SESSION_SECRET` and that `DISCORD_REDIRECT_URI` exactly matches a redirect URL registered in Discord. |\n| Pomfy player is blank | The selected third-party provider may be unavailable or the content may be region-locked. |
 | Screen share doesn't work for viewers | Host must click "Iniciar compartilhamento" and allow browser permission. System-audio capture varies by browser. If peers cannot connect across restrictive networks, configure TURN (for example Coturn). |
 | `PORT` already defined | Render injects `PORT` automatically. Don't override it. |
 
