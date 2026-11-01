@@ -153,6 +153,7 @@ function initSocket() {
     if (qualitySelect) qualitySelect.parentElement.hidden = false;
     if (audioButton) audioButton.hidden = false;
     if (stopShareButton) stopShareButton.hidden = false;
+    configureShareControls();
     addSystem(`👑 ${message}`);
 
     // Remove o vídeo da stream anterior que ainda pode estar no DOM
@@ -180,6 +181,13 @@ function initSocket() {
   });
 
   // Novo host subiu stream — viewers limpam estado antigo e pedem a nova
+  socket.on("stream-ended", () => {
+    if (isHost) return;
+    cleanupScreenVideo();
+    setShareStatus("O host encerrou a transmissão", "waiting");
+    addSystem("O compartilhamento de tela foi encerrado.");
+  });
+
   socket.on("stream-started", () => {
     if (isHost) return;
     setShareStatus("Nova transmissão detectada. Conectando…", "waiting");
@@ -676,13 +684,16 @@ function newPC(peerId, isHostPeer) {
   if (peers[peerId]) { peers[peerId].close(); delete peers[peerId]; }
   const pc = new RTCPeerConnection(ICE);
   peers[peerId] = pc;
-  if (isHostPeer && localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  if (isHostPeer && localStream) {
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    setTimeout(() => applyShareQuality(), 0);
+  }
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === "connected") setShareStatus("Conectado", "connected");
     else if (pc.connectionState === "failed") {
       setShareStatus("Conexão falhou. Tentando reconectar…", "error");
       if (!isHost) setTimeout(() => { if (pc.connectionState === "failed") socket.emit("rtc-request-stream"); }, 1500);
-      else { try { pc.restartIce(); } catch {} }
+      else setTimeout(() => { if (localStream && peers[peerId] === pc) sendOffer(peerId).catch((err) => console.error("[rtc] reconnect offer failed", err)); }, 1000);
     } else if (pc.connectionState === "disconnected") {
       setShareStatus("Conexão instável. Reconectando…", "waiting");
       if (!isHost) setTimeout(() => { if (pc.connectionState === "disconnected") socket.emit("rtc-request-stream"); }, 2500);
@@ -773,6 +784,7 @@ function stopLocalShare(notify = true) {
   stream.getTracks().forEach((track) => { track.onended = null; track.stop(); });
   cleanupScreenVideo();
   closeAllPeers();
+  socket.emit("stream-ended");
   shareBtn.style.display = "block";
   setShareStatus("Transmissão encerrada", "waiting");
   if (notify) addSystem("Você encerrou o compartilhamento.");
