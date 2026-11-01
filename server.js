@@ -30,6 +30,7 @@ app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; frame-src https:; connect-src 'self' https://discord.com wss: ws:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'");
   next();
 });
 
@@ -79,6 +80,7 @@ app.get("/auth/discord", (req, res) => {
   if (!configReady(res)) return;
   const state = randomBytes(24).toString("base64url");
   states.set(state, { expiresAt: Date.now() + 10 * 60 * 1000, returnTo: safePath(req.query.returnTo) });
+  res.setHeader("Set-Cookie", "wp_oauth_state=" + state + "; HttpOnly; SameSite=Lax; Path=/auth/discord; Max-Age=600" + (process.env.NODE_ENV === "production" ? "; Secure" : ""));
   const query = new URLSearchParams({
     client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: "code", scope: "identify", state,
   });
@@ -88,7 +90,9 @@ app.get("/auth/discord/callback", async (req, res) => {
   if (!configReady(res)) return;
   const pending = typeof req.query.state === "string" ? states.get(req.query.state) : null;
   if (typeof req.query.state === "string") states.delete(req.query.state);
-  if (req.query.error || !req.query.code || !pending || pending.expiresAt < Date.now()) {
+  const browserState = cookies(req.headers.cookie).wp_oauth_state;
+  res.setHeader("Set-Cookie", "wp_oauth_state=; HttpOnly; SameSite=Lax; Path=/auth/discord; Max-Age=0" + (process.env.NODE_ENV === "production" ? "; Secure" : ""));
+  if (req.query.error || !req.query.code || !pending || pending.expiresAt < Date.now() || !browserState || !equal(browserState, String(req.query.state || ""))) {
     return res.status(400).send("Discord login cancelled or expired. Return to the app and try again.");
   }
   try {
@@ -238,6 +242,10 @@ io.on("connection", (socket) => {
   socket.on("stream-started", () => {
     const room = roomId && getRoom(roomId);
     if (room && room.type === "screenshare" && room.hostSocketId === socket.id) socket.to(roomId).emit("stream-started");
+  });
+  socket.on("stream-ended", () => {
+    const room = roomId && getRoom(roomId);
+    if (room && room.type === "screenshare" && room.hostSocketId === socket.id) socket.to(roomId).emit("stream-ended");
   });
   socket.on("rtc-request-stream", () => {
     const room = roomId && getRoom(roomId);
