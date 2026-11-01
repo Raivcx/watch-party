@@ -22,7 +22,7 @@ The session store is in memory; users must authenticate again after a process re
 
 Movie and series sources are third-party embeds. Cross-origin iframe providers do not expose a common playback API, so universal automatic play/pause/seek synchronization cannot be guaranteed. The current sync action is best-effort and providers may ignore URL seek parameters.
 
-Screen sharing currently uses host-to-viewer peer-to-peer WebRTC. It is suitable only for small rooms and is not an SFU or Discord-style multi-user simultaneous screen sharing. Larger rooms require an SFU (such as LiveKit or mediasoup) and TURN infrastructure.
+Screen sharing currently uses host-to-viewer peer-to-peer WebRTC. A host can stream to multiple viewers, with capture quality presets, a system-audio track toggle, connection status, reconnect attempts and fullscreen playback. The browser's native picker selects a monitor, window or tab where supported. This is not multi-host simultaneous screen sharing or an SFU; larger rooms require an SFU (such as LiveKit or mediasoup) and TURN infrastructure.
 
 ## Deployment
 
