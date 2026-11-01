@@ -15,7 +15,6 @@ import {
   Events,
 } from "discord.js";
 import { searchTitle } from "../lib/tmdb.js";
-import { extractYouTubeId } from "../lib/youtube.js";
 import { createRoom, listRooms } from "../lib/roomStore.js";
 import { commands } from "./commands.js";
 
@@ -60,8 +59,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.commandName === "watch") {
       await handleWatch(interaction);
-    } else if (interaction.commandName === "yt") {
-      await handleYouTube(interaction);
     } else if (interaction.commandName === "screenshare") {
       await handleScreenshare(interaction);
     } else if (interaction.commandName === "status") {
@@ -208,43 +205,6 @@ async function handleWatch(interaction) {
   if (result.overview) embed.addFields({ name: "Overview", value: result.overview.slice(0, 300) });
 
   return interaction.editReply({
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
-      ),
-    ],
-  });
-}
-
-// --- /yt <link> ---
-async function handleYouTube(interaction) {
-  const link    = interaction.options.getString("link");
-  const videoId = extractYouTubeId(link);
-
-  if (!videoId) {
-    return interaction.reply({
-      content: "That doesn't look like a valid YouTube link.",
-      ephemeral: true,
-    });
-  }
-
-  const room = createRoom({
-    type: "youtube",
-    media: { videoId, url: `https://www.youtube.com/watch?v=${videoId}` },
-    hostUserId: interaction.user.id,
-  });
-
-  const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
-
-  const embed = new EmbedBuilder()
-    .setTitle("📺 YouTube Watch Party")
-    .setDescription("Clique no botão para entrar na sala sincronizada.")
-    .setURL(roomUrl)
-    .setColor(0xff0000)
-    .setThumbnail(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`);
-
-  return interaction.reply({
     embeds: [embed],
     components: [
       new ActionRowBuilder().addComponents(
