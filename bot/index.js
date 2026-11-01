@@ -258,8 +258,8 @@ async function handleStatus(interaction) {
     });
   }
 
-  const typeEmoji = { movie: "🎬", serie: "📺", youtube: "▶️", screenshare: "🖥️" };
-  const typeLabel = { movie: "Filme", serie: "Série", youtube: "YouTube", screenshare: "Screenshare" };
+  const typeEmoji = { movie: "🎬", serie: "📺", screenshare: "🖥️" };
+  const typeLabel = { movie: "Filme", serie: "Série", screenshare: "Screenshare" };
 
   const lines = rooms.map((r) => {
     const emoji = typeEmoji[r.type] || "🎬";
