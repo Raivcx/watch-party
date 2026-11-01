@@ -85,20 +85,28 @@ app.use((req, res, next) => {
 
 // ── Auth routes ───────────────────────────────────────────────────────────────
 
+// Server-side OAuth state store — avoids cross-site cookie issues entirely.
+// Map<state, { returnTo: string, expiresAt: number }>
+const oauthStates = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of oauthStates) if (v.expiresAt < now) oauthStates.delete(k);
+}, 60_000).unref?.();
+
 app.get("/auth/login", (req, res) => {
   if (!DISCORD_CLIENT_SECRET) {
     return res.status(503).send("Discord OAuth2 not configured. Set DISCORD_CLIENT_SECRET and SESSION_SECRET in environment variables.");
   }
 
-  const returnTo = req.query.return || "/";
-  const state = Buffer.from(JSON.stringify({
-    return: returnTo,
-    nonce:  randomBytes(16).toString("hex"),
-  })).toString("base64url");
+  // Only allow relative paths as returnTo
+  const raw      = String(req.query.return || "/");
+  const returnTo = raw.startsWith("/") ? raw : "/";
 
-  const stateCookie = setCookieHeader("wp_oauth_state", state, { maxAge: 300, path: "/auth" });
-  console.log(`[auth] login → setting state cookie, returnTo=${returnTo}`);
-  res.setHeader("Set-Cookie", stateCookie);
+  // Random state stored server-side — no cookie needed
+  const state = randomBytes(24).toString("hex");
+  oauthStates.set(state, { returnTo, expiresAt: Date.now() + 5 * 60 * 1000 });
+
+  console.log(`[auth] login → state=${state.slice(0, 8)}... returnTo=${returnTo}`);
 
   const params = new URLSearchParams({
     client_id:     DISCORD_CLIENT_ID,
@@ -106,43 +114,29 @@ app.get("/auth/login", (req, res) => {
     response_type: "code",
     scope:         "identify",
     state,
-    prompt:        "none", // skip consent screen if already authorized
+    prompt:        "none",
   });
   res.redirect(`${DISCORD_AUTH_URL}?${params}`);
 });
 
 app.get("/auth/callback", async (req, res) => {
   const { code, state } = req.query;
-  if (!code) return res.redirect("/?error=no_code");
 
-  // Validate state against cookie
-  const rawCookies = (req.headers.cookie || "").split(";").reduce((acc, c) => {
-    const [k, ...v] = c.trim().split("=");
-    acc[k] = v.join("=");
-    return acc;
-  }, {});
+  console.log(`[auth] callback → code=${!!code} state_known=${oauthStates.has(state)}`);
 
-  const cookieState = rawCookies.wp_oauth_state
-    ? decodeURIComponent(rawCookies.wp_oauth_state)
-    : null;
+  if (!code || !state) return res.redirect("/?error=no_code");
 
-  console.log(`[auth] callback → code=${!!code} state_present=${!!state} cookie_present=${!!cookieState} match=${state === cookieState}`);
-  console.log(`[auth] callback → cookies received: ${Object.keys(rawCookies).join(", ") || "(none)"}`);
-
-  if (!state || state !== cookieState) {
-    console.error(`[auth] invalid_state — state=${state?.slice(0,20)}... cookie=${cookieState?.slice(0,20)}...`);
+  // Validate state server-side — single use
+  const stateData = oauthStates.get(state);
+  if (!stateData || stateData.expiresAt < Date.now()) {
+    console.error("[auth] invalid_state — not found or expired");
     return res.redirect("/?error=invalid_state");
   }
+  oauthStates.delete(state);
 
-  let returnTo = "/";
-  try {
-    const parsed = JSON.parse(Buffer.from(state, "base64url").toString());
-    const candidate = decodeURIComponent(parsed.return || "/");
-    if (candidate.startsWith("/")) returnTo = candidate;
-  } catch { /* keep "/" */ }
+  const returnTo = stateData.returnTo;
 
   try {
-    // Exchange code for access token
     const tokenRes = await fetch(DISCORD_TOKEN_URL, {
       method:  "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -160,7 +154,6 @@ app.get("/auth/callback", async (req, res) => {
     }
     const { access_token } = await tokenRes.json();
 
-    // Fetch Discord user profile
     const userRes = await fetch(`${DISCORD_API_URL}/users/@me`, {
       headers: { Authorization: `Bearer ${access_token}` },
     });
@@ -175,18 +168,18 @@ app.get("/auth/callback", async (req, res) => {
         : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(du.id) % 5n)}.png`,
     };
 
+    console.log(`[auth] success → ${user.username} (${user.id})`);
+
     const sessionCookie = createSession(user);
-    res.setHeader("Set-Cookie", [
-      setCookieHeader("wp_session",     sessionCookie, { maxAge: 7 * 24 * 3600 }),
-      setCookieHeader("wp_oauth_state", "",            { maxAge: 0, path: "/auth" }),
-    ]);
+    res.setHeader("Set-Cookie",
+      setCookieHeader("wp_session", sessionCookie, { maxAge: 7 * 24 * 3600 })
+    );
     res.redirect(returnTo);
   } catch (err) {
     console.error("[auth] callback error:", err);
     res.redirect("/?error=auth_failed");
   }
 });
-
 app.get("/auth/me", (req, res) => {
   const user = getUser(req);
   if (!user) return res.status(401).json({ error: "Not authenticated" });
@@ -500,4 +493,5 @@ httpServer.listen(PORT, () => {
 });
 
 import "./bot/index.js";
+
 
