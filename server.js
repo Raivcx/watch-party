@@ -204,21 +204,21 @@ io.on("connection", (socket) => {
     roomId = id;
     socket.join(id);
     room.userCount++;
-    const isOwner = room.hostUserId === user.id;
-    if (isOwner && !room.hostSocketId) room.hostSocketId = socket.id;
+    const isHost = room.hostUserId === user.id && !room.hostSocketId;
+    if (isHost) room.hostSocketId = socket.id;
     socket.to(id).emit("user-joined", { socketId: socket.id, name: user.username, userCount: room.userCount });
     socket.emit("room-info", {
       type: room.type, media: room.media, yourId: socket.id,
-      user: user, isHost: Boolean(isOwner && room.hostSocketId === socket.id),
+      user: user, isHost,
       hostConnected: Boolean(room.hostSocketId), userCount: room.userCount,
     });
-    if (!isOwner && room.syncState) {
+    if (!isHost && room.syncState) {
       const elapsed = Math.floor((Date.now() - room.syncState.savedAt) / 1000);
       socket.emit("iframe-sync", {
         time: room.syncState.time + elapsed, sourceIdx: room.syncState.sourceIdx, autoSync: true,
       });
     }
-    if (!isOwner && room.hostSocketId) {
+    if (!isHost && room.hostSocketId) {
       io.to(room.hostSocketId).emit("viewer-joined-notify", { socketId: socket.id, name: user.username });
     }
   });
