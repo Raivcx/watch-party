@@ -54,9 +54,9 @@ function isSecure() {
 }
 
 function setCookieHeader(name, value, opts = {}) {
-  const parts = [`${name}=${value}`, "HttpOnly", "SameSite=Lax", "Path=/"];
+  const path    = opts.path || "/";
+  const parts   = [`${name}=${encodeURIComponent(value)}`, "HttpOnly", "SameSite=Lax", `Path=${path}`];
   if (opts.maxAge !== undefined) parts.push(`Max-Age=${opts.maxAge}`);
-  if (opts.path)   parts[parts.indexOf("Path=/")] = `Path=${opts.path}`;
   if (opts.secure || isSecure()) parts.push("Secure");
   return parts.join("; ");
 }
@@ -96,9 +96,9 @@ app.get("/auth/login", (req, res) => {
     nonce:  randomBytes(16).toString("hex"),
   })).toString("base64url");
 
-  res.setHeader("Set-Cookie",
-    setCookieHeader("wp_oauth_state", state, { maxAge: 300, path: "/auth" })
-  );
+  const stateCookie = setCookieHeader("wp_oauth_state", state, { maxAge: 300, path: "/auth" });
+  console.log(`[auth] login → setting state cookie, returnTo=${returnTo}`);
+  res.setHeader("Set-Cookie", stateCookie);
 
   const params = new URLSearchParams({
     client_id:     DISCORD_CLIENT_ID,
@@ -122,7 +122,15 @@ app.get("/auth/callback", async (req, res) => {
     return acc;
   }, {});
 
-  if (!state || state !== rawCookies.wp_oauth_state) {
+  const cookieState = rawCookies.wp_oauth_state
+    ? decodeURIComponent(rawCookies.wp_oauth_state)
+    : null;
+
+  console.log(`[auth] callback → code=${!!code} state_present=${!!state} cookie_present=${!!cookieState} match=${state === cookieState}`);
+  console.log(`[auth] callback → cookies received: ${Object.keys(rawCookies).join(", ") || "(none)"}`);
+
+  if (!state || state !== cookieState) {
+    console.error(`[auth] invalid_state — state=${state?.slice(0,20)}... cookie=${cookieState?.slice(0,20)}...`);
     return res.redirect("/?error=invalid_state");
   }
 
@@ -492,3 +500,4 @@ httpServer.listen(PORT, () => {
 });
 
 import "./bot/index.js";
+
