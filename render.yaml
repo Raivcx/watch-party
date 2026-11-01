@@ -11,10 +11,13 @@ services:
         sync: false
       - key: CLIENT_ID
         sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_REDIRECT_URI
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
       - key: TMDB_API_KEY
         sync: false
       - key: PUBLIC_URL
-        value: https://watch-party.onrender.com
-      - key: PORT
-        value: "3000"
-
+        sync: false
