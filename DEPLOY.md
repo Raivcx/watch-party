@@ -66,7 +66,10 @@ git push -u origin main
    | Key | Value |
    |-----|-------|
    | `DISCORD_TOKEN` | Your bot token |
-   | `CLIENT_ID` | Your bot client ID |
+   | `CLIENT_ID` | Discord application/client ID |
+   | `DISCORD_CLIENT_SECRET` | Discord OAuth2 client secret |
+   | `SESSION_SECRET` | Random secret from `openssl rand -base64 48` |
+   | `DISCORD_REDIRECT_URI` | `https://watch-party-xxxx.onrender.com/auth/discord/callback` |
    | `TMDB_API_KEY` | Your TMDB API key |
    | `PUBLIC_URL` | `https://watch-party-xxxx.onrender.com` (set after first deploy) |
    | `PORT` | `3000` (Render auto-provides `PORT`, but this is a fallback) |
@@ -86,11 +89,12 @@ After the first deploy, Render assigns a URL like `https://watch-party-xxxx.onre
 
 Slash commands are **auto-registered on startup** — no shell access needed.
 
-When the bot starts, it calls Discord's API to register `/watch`, `/yt`, and `/screenshare`. You'll see `Slash commands registered automatically.` in the Render logs.
+When the bot starts, it registers `/watch`, `/screenshare` and `/status` in each server where it is installed.
 
 After your first deploy:
-1. Wait for the server to fully start (check logs for `Discord bot online`).
-2. Go to Discord and try `/watch movie Inception`.
+1. Set `DISCORD_REDIRECT_URI` to the exact Render callback URL and register the same URL in Discord Developer Portal.
+2. Wait for the server to fully start (check logs for `Discord bot online`).
+3. Open the web app, select **Entrar com Discord**, authorize the `identify` scope, then test `/watch` or `/screenshare` in Discord.
 
 > If commands don't appear, restart the service from the Render dashboard (Manual Deploy → Restart). The auto-registration runs on every startup.
 
@@ -148,8 +152,7 @@ CREATE TABLE rooms (
 | Bot doesn't respond to commands | Run `npm run deploy-commands` again; check `DISCORD_TOKEN` and `CLIENT_ID` |
 | Room link shows "Room Unavailable" | Render restarted (free tier sleep). Create a new room from Discord. |
 | Pomfy player is blank | Pomfy API may be down; try another title. Some content may be region-locked. |
-| YouTube sync is off by a few seconds | Normal — network latency. Seek events re-sync automatically. |
-| Screen share doesn't work for viewers | Host must click "Start Screen Share" and allow the browser permission. STUN works on free tier; for large groups add a TURN server (Coturn). |
+| Screen share doesn't work for viewers | Host must click "Iniciar compartilhamento" and allow browser permission. System-audio capture varies by browser. If peers cannot connect across restrictive networks, configure TURN (for example Coturn). |
 | `PORT` already defined | Render injects `PORT` automatically. Don't override it. |
 
 ---
@@ -160,6 +163,9 @@ CREATE TABLE rooms (
 |----------|----------|-----------------|
 | `DISCORD_TOKEN` | Yes | Discord Developer Portal → Bot |
 | `CLIENT_ID` | Yes | Discord Developer Portal → OAuth2 |
+| `DISCORD_CLIENT_SECRET` | Yes | Discord Developer Portal → OAuth2 → General |
+| `DISCORD_REDIRECT_URI` | Yes | Exact callback URL registered in Discord |
+| `SESSION_SECRET` | Yes | Generate with `openssl rand -base64 48` |
 | `TMDB_API_KEY` | Yes | TMDB → Settings → API |
 | `PUBLIC_URL` | Yes | Render dashboard (after first deploy) |
 | `PORT` | No | Auto-provided by Render |
