@@ -1,3 +1,4 @@
+// v2 — Discord OAuth2 + Discord UI
 // Main server: Express (REST + static) + Socket.IO + Discord OAuth2
 import "dotenv/config";
 import { randomBytes }  from "crypto";
@@ -39,12 +40,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getUser(req) {
-  return getSession(parseCookie(req));
+async function getUser(req) {
+  return await getSession(parseCookie(req));
 }
 
-function requireAuth(req, res, next) {
-  if (getUser(req)) return next();
+async function requireAuth(req, res, next) {
+  if (await getUser(req)) return next();
   const returnTo = encodeURIComponent(req.originalUrl);
   res.redirect(`/auth/login?return=${returnTo}`);
 }
@@ -173,7 +174,7 @@ app.get("/auth/callback", async (req, res) => {
 
     console.log(`[auth] success → ${user.username} (${user.id})`);
 
-    const sessionCookie = createSession(user);
+    const sessionCookie = await createSession(user);
     res.setHeader("Set-Cookie",
       setCookieHeader("wp_session", sessionCookie, { maxAge: 7 * 24 * 3600 })
     );
@@ -183,16 +184,16 @@ app.get("/auth/callback", async (req, res) => {
     res.redirect("/?error=auth_failed");
   }
 });
-app.get("/auth/me", (req, res) => {
+app.get("/auth/me", async (req, res) => {
   const cookieVal = parseCookie(req);
-  const user = getUser(req);
+  const user = await getUser(req);
   console.log(`[auth/me] cookie_present=${!!cookieVal} user=${user?.username || "null"}`);
   if (!user) return res.status(401).json({ error: "Not authenticated" });
   res.json(user);
 });
 
-app.get("/auth/logout", (req, res) => {
-  deleteSession(parseCookie(req));
+app.get("/auth/logout", async (req, res) => {
+  await deleteSession(parseCookie(req));
   res.setHeader("Set-Cookie", setCookieHeader("wp_session", "", { maxAge: 0 }));
   res.redirect("/");
 });
@@ -253,11 +254,11 @@ app.get("/room/:id", requireAuth, (_req, res) => {
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
 
 // Auth middleware: reject connections without valid session
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const cookieHeader = socket.handshake.headers.cookie || "";
   const pair = cookieHeader.split(";").map(s => s.trim()).find(s => s.startsWith("wp_session="));
   const cookieValue = pair ? decodeURIComponent(pair.slice("wp_session=".length)) : null;
-  const user = getSession(cookieValue);
+  const user = await getSession(cookieValue);
   if (!user) return next(new Error("Unauthorized"));
   socket.data.user = user;
   next();
@@ -498,5 +499,6 @@ httpServer.listen(PORT, () => {
 });
 
 import "./bot/index.js";
+
 
 
