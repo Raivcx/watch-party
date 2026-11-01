@@ -98,9 +98,12 @@ app.get("/auth/login", (req, res) => {
     return res.status(503).send("Discord OAuth2 not configured. Set DISCORD_CLIENT_SECRET and SESSION_SECRET in environment variables.");
   }
 
-  // Only allow relative paths as returnTo
-  const raw      = String(req.query.return || "/");
-  const returnTo = raw.startsWith("/") ? raw : "/";
+  // Decode and validate returnTo — req.query.return arrives URL-encoded
+  let returnTo = "/";
+  try {
+    const raw = decodeURIComponent(String(req.query.return || "/"));
+    if (raw.startsWith("/")) returnTo = raw;
+  } catch { returnTo = "/"; }
 
   // Random state stored server-side — no cookie needed
   const state = randomBytes(24).toString("hex");
@@ -181,7 +184,9 @@ app.get("/auth/callback", async (req, res) => {
   }
 });
 app.get("/auth/me", (req, res) => {
+  const cookieVal = parseCookie(req);
   const user = getUser(req);
+  console.log(`[auth/me] cookie_present=${!!cookieVal} user=${user?.username || "null"}`);
   if (!user) return res.status(401).json({ error: "Not authenticated" });
   res.json(user);
 });
