@@ -1,7 +1,7 @@
 {
   "name": "watch-party",
   "version": "1.0.0",
-  "description": "Discord watch party platform — movies, YouTube sync, screen sharing, live chat",
+  "description": "Discord watch party platform — movies, series and WebRTC screen sharing",
   "main": "server.js",
   "type": "module",
   "scripts": {
