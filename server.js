@@ -44,7 +44,11 @@ function equal(a, b) {
 function cookies(header) {
   return Object.fromEntries(String(header || "").split(";").map((part) => {
     const i = part.indexOf("=");
-    return i < 0 ? ["", ""] : [part.slice(0, i).trim(), decodeURIComponent(part.slice(i + 1).trim())];
+    if (i < 0) return ["", ""];
+    const key = part.slice(0, i).trim();
+    const raw = part.slice(i + 1).trim();
+    try { return [key, decodeURIComponent(raw)]; }
+    catch { return [key, ""]; }
   }).filter((entry) => entry[0]));
 }
 function getSession(header) {
@@ -64,7 +68,7 @@ function getSession(header) {
   return entry;
 }
 function setCookie(res, id) {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const secure = (process.env.NODE_ENV === "production" || PUBLIC_URL.startsWith("https://")) ? "; Secure" : "";
   res.setHeader("Set-Cookie", "wp_session=" + encodeURIComponent(id + "." + signature(id)) +
     "; HttpOnly; SameSite=Lax; Path=/; Max-Age=" + Math.floor(SESSION_TTL / 1000) + secure);
 }
