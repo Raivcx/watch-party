@@ -86,7 +86,7 @@ app.get("/auth/discord", (req, res) => {
   if (!configReady(res)) return;
   const state = randomBytes(24).toString("base64url");
   states.set(state, { expiresAt: Date.now() + 10 * 60 * 1000, returnTo: safePath(req.query.returnTo) });
-  res.setHeader("Set-Cookie", "wp_oauth_state=" + state + "; HttpOnly; SameSite=Lax; Path=/auth/discord; Max-Age=600" + (process.env.NODE_ENV === "production" ? "; Secure" : ""));
+  res.setHeader("Set-Cookie", "wp_oauth_state=" + state + "; HttpOnly; SameSite=Lax; Path=/auth/discord; Max-Age=600" + ((process.env.NODE_ENV === "production" || PUBLIC_URL.startsWith("https://")) ? "; Secure" : ""));
   const query = new URLSearchParams({
     client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: "code", scope: "identify", state,
   });
@@ -97,7 +97,7 @@ app.get("/auth/discord/callback", async (req, res) => {
   const pending = typeof req.query.state === "string" ? states.get(req.query.state) : null;
   if (typeof req.query.state === "string") states.delete(req.query.state);
   const browserState = cookies(req.headers.cookie).wp_oauth_state;
-  res.setHeader("Set-Cookie", "wp_oauth_state=; HttpOnly; SameSite=Lax; Path=/auth/discord; Max-Age=0" + (process.env.NODE_ENV === "production" ? "; Secure" : ""));
+  res.setHeader("Set-Cookie", "wp_oauth_state=; HttpOnly; SameSite=Lax; Path=/auth/discord; Max-Age=0" + ((process.env.NODE_ENV === "production" || PUBLIC_URL.startsWith("https://")) ? "; Secure" : ""));
   if (req.query.error || !req.query.code || !pending || pending.expiresAt < Date.now() || !browserState || !equal(browserState, String(req.query.state || ""))) {
     return res.status(400).send("Discord login cancelled or expired. Return to the app and try again.");
   }
@@ -141,7 +141,7 @@ app.get("/auth/logout", (req, res) => {
   const id = raw && raw.split(".")[0];
   if (id) sessions.delete(id);
   res.setHeader("Set-Cookie", "wp_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0" +
-    (process.env.NODE_ENV === "production" ? "; Secure" : ""));
+    ((process.env.NODE_ENV === "production" || PUBLIC_URL.startsWith("https://")) ? "; Secure" : ""));
   res.redirect("/");
 });
 app.get("/api/me", (req, res) => {
