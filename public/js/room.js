@@ -12,6 +12,12 @@ const chatInput    = document.getElementById("chat-input");
 const userCountEl  = document.getElementById("user-count");
 const mediaEl      = document.getElementById("media-container");
 const shareBtn     = document.getElementById("start-share-btn");
+const screenControls = document.getElementById("screen-controls");
+const screenStatus = document.getElementById("screen-status");
+const qualitySelect = document.getElementById("share-quality");
+const audioButton = document.getElementById("toggle-audio");
+const stopShareButton = document.getElementById("stop-share");
+const fullscreenButton = document.getElementById("fullscreen-share");
 const errorOverlay = document.getElementById("error-overlay");
 const errorText    = document.getElementById("error-text");
 
@@ -142,6 +148,11 @@ function initSocket() {
 
   socket.on("host-promoted", ({ message }) => {
     isHost = true;
+    setShareStatus("Você é o novo host. Inicie uma transmissão.", "waiting");
+    if (screenControls) screenControls.hidden = false;
+    if (qualitySelect) qualitySelect.parentElement.hidden = false;
+    if (audioButton) audioButton.hidden = false;
+    if (stopShareButton) stopShareButton.hidden = false;
     addSystem(`👑 ${message}`);
 
     // Remove o vídeo da stream anterior que ainda pode estar no DOM
@@ -161,6 +172,7 @@ function initSocket() {
   });
 
   socket.on("host-changed", ({ newHostId, newHostName }) => {
+    setShareStatus("Reconectando ao novo host…", "waiting");
     addSystem(`👑 Novo host: ${esc(newHostName || newHostId.slice(0, 6))}`);
     // Limpa o vídeo antigo e aguarda nova stream do novo host
     cleanupScreenVideo();
@@ -170,6 +182,7 @@ function initSocket() {
   // Novo host subiu stream — viewers limpam estado antigo e pedem a nova
   socket.on("stream-started", () => {
     if (isHost) return;
+    setShareStatus("Nova transmissão detectada. Conectando…", "waiting");
     cleanupScreenVideo();
     addSystem("🟢 Nova transmissão disponível, conectando…");
     // Pequeno delay para o novo host terminar de configurar as tracks
@@ -547,30 +560,42 @@ const ICE = { iceServers: [
 
 function setupScreenshare() {
   if (rtcSetup) return; rtcSetup = true;
-  document.title = "🖥️ Screen Share — Watch Party";
+  document.title = "Compartilhamento de tela — Watch Party";
   setupRTCSignaling();
   shareBtn.style.display = "block";
+  if (screenControls) screenControls.hidden = false;
+  if (qualitySelect) qualitySelect.parentElement.hidden = false;
+  if (audioButton) audioButton.hidden = false;
+  if (stopShareButton) stopShareButton.hidden = false;
   shareBtn.addEventListener("click", startShare);
+  configureShareControls();
 }
 
 function setupRTCViewer() {
   if (rtcSetup) return; rtcSetup = true;
-  document.title = "🖥️ Screen Share — Watch Party";
+  document.title = "Compartilhamento de tela — Watch Party";
+  if (screenControls) screenControls.hidden = false;
+  if (qualitySelect) qualitySelect.parentElement.hidden = true;
+  if (audioButton) audioButton.hidden = true;
+  if (stopShareButton) stopShareButton.hidden = true;
+  setShareStatus("Aguardando transmissão do host…", "waiting");
   setupRTCSignaling();
   addSystem("Aguardando stream do host…");
   setTimeout(() => socket.emit("rtc-request-stream"), 800);
 }
 
 function setupRTCSignaling() {
-  socket.on("rtc-request-stream", ({ from }) => { if (localStream) sendOffer(from); });
+  socket.on("rtc-request-stream", ({ from }) => { if (localStream && isHost) sendOffer(from).catch((err) => console.error("[rtc] offer failed", err)); });
 
   socket.on("rtc-offer", async ({ from, sdp }) => {
-    addSystem("Recebendo stream…");
-    const pc = newPC(from, false);
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit("rtc-answer", { to: from, sdp: answer });
+    try {
+      addSystem("Recebendo stream…");
+      const pc = newPC(from, false);
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit("rtc-answer", { to: from, sdp: answer });
+    } catch (err) { setShareStatus("Falha ao negociar conexão. Tentando novamente…", "error"); console.error("[rtc] answer failed", err); }
   });
 
   socket.on("rtc-answer", async ({ from, sdp }) => {
@@ -596,7 +621,10 @@ async function startShare() {
     // Fecha peer connections antigas antes de criar novas
     closeAllPeers();
 
-    localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    localStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 } }, audio: true });
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (!videoTrack) throw new Error("O navegador não retornou uma faixa de vídeo.");
+    await applyShareQuality();
 
     // Remove vídeo antigo se ainda existir no DOM
     cleanupScreenVideo();
@@ -608,24 +636,29 @@ async function startShare() {
     video.srcObject = localStream;
     mediaEl.appendChild(video);
     shareBtn.style.display = "none";
+    setShareStatus("Transmitindo para a sala", "connected");
+    if (audioButton) audioButton.textContent = localStream.getAudioTracks().length ? "Áudio: ligado" : "Áudio: indisponível";
     addSystem("Compartilhando sua tela.");
 
     // Avisa todos os viewers que a nova stream está disponível
     socket.emit("stream-started");
 
     localStream.getVideoTracks()[0].onended = () => {
-      video.remove(); localStream = null;
-      _sharingInProgress = false;
+      video.remove();
+      stopLocalShare(false);
       closeAllPeers();
       shareBtn.style.display = "block";
+      setShareStatus("Transmissão encerrada", "waiting");
       addSystem("Compartilhamento encerrado.");
     };
   } catch (err) {
     _sharingInProgress = false;
     // NotAllowedError = usuário cancelou o picker ou negou permissão
     if (err.name === "NotAllowedError") {
+      setShareStatus("Compartilhamento cancelado", "waiting");
       addSystem("Compartilhamento cancelado.");
     } else {
+      setShareStatus("Erro ao iniciar transmissão", "error");
       addSystem(`Erro ao compartilhar: ${err.message || err.name}`);
       console.error("[screenshare]", err);
     }
@@ -644,6 +677,17 @@ function newPC(peerId, isHostPeer) {
   const pc = new RTCPeerConnection(ICE);
   peers[peerId] = pc;
   if (isHostPeer && localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "connected") setShareStatus("Conectado", "connected");
+    else if (pc.connectionState === "failed") {
+      setShareStatus("Conexão falhou. Tentando reconectar…", "error");
+      if (!isHost) setTimeout(() => { if (pc.connectionState === "failed") socket.emit("rtc-request-stream"); }, 1500);
+      else { try { pc.restartIce(); } catch {} }
+    } else if (pc.connectionState === "disconnected") {
+      setShareStatus("Conexão instável. Reconectando…", "waiting");
+      if (!isHost) setTimeout(() => { if (pc.connectionState === "disconnected") socket.emit("rtc-request-stream"); }, 2500);
+    }
+  };
   pc.onicecandidate = ({ candidate }) => {
     if (candidate) socket.emit("rtc-ice", { to: peerId, candidate });
   };
@@ -668,6 +712,70 @@ function newPC(peerId, isHostPeer) {
     addSystem("Recebendo tela do host.");
   };
   return pc;
+}
+
+
+function setShareStatus(message, state = "waiting") {
+  if (!screenStatus) return;
+  screenStatus.textContent = message;
+  screenStatus.dataset.state = state;
+}
+
+function configureShareControls() {
+  qualitySelect?.addEventListener("change", applyShareQuality);
+  audioButton?.addEventListener("click", () => {
+    if (!localStream) return;
+    const tracks = localStream.getAudioTracks();
+    if (!tracks.length) { setShareStatus("Esta captura não disponibiliza áudio do sistema", "error"); return; }
+    const enable = !tracks.some((track) => track.enabled);
+    tracks.forEach((track) => { track.enabled = enable; });
+    audioButton.textContent = enable ? "Áudio: ligado" : "Áudio: desligado";
+  });
+  stopShareButton?.addEventListener("click", () => stopLocalShare(true));
+  fullscreenButton?.addEventListener("click", async () => {
+    const video = document.getElementById("screen-video");
+    if (!video) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await video.requestFullscreen();
+    } catch (err) { addSystem("Não foi possível ativar tela cheia: " + err.message); }
+  });
+}
+
+async function applyShareQuality() {
+  if (!localStream) return;
+  const profiles = {
+    low: { width: 854, height: 480, frameRate: 15, bitrate: 700000 },
+    balanced: { width: 1280, height: 720, frameRate: 30, bitrate: 1800000 },
+    high: { width: 1920, height: 1080, frameRate: 30, bitrate: 4500000 },
+  };
+  const profile = profiles[qualitySelect?.value] || profiles.balanced;
+  const track = localStream.getVideoTracks()[0];
+  try { await track.applyConstraints({ width: { ideal: profile.width }, height: { ideal: profile.height }, frameRate: { ideal: profile.frameRate, max: profile.frameRate } }); }
+  catch (err) { console.warn("[screenshare] capture quality constraint unavailable", err); }
+  await Promise.all(Object.values(peers).map(async (pc) => {
+    const sender = pc.getSenders().find((item) => item.track?.kind === "video");
+    if (!sender) return;
+    try {
+      const params = sender.getParameters();
+      params.encodings = params.encodings?.length ? params.encodings : [{}];
+      params.encodings[0].maxBitrate = profile.bitrate;
+      await sender.setParameters(params);
+    } catch (err) { console.warn("[screenshare] bitrate setting unavailable", err); }
+  }));
+}
+
+function stopLocalShare(notify = true) {
+  if (!localStream) return;
+  const stream = localStream;
+  localStream = null;
+  _sharingInProgress = false;
+  stream.getTracks().forEach((track) => { track.onended = null; track.stop(); });
+  cleanupScreenVideo();
+  closeAllPeers();
+  shareBtn.style.display = "block";
+  setShareStatus("Transmissão encerrada", "waiting");
+  if (notify) addSystem("Você encerrou o compartilhamento.");
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
