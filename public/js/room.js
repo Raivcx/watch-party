@@ -204,7 +204,7 @@ function initSocket() {
     updateCountDisplay();
     addSystem(`${esc(joinName || socketId.slice(0, 6))} entrou na sala.`);
     // WebRTC: host manda offer para novo viewer se estiver compartilhando
-    if (localStream) sendOffer(socketId);
+    if (localStream) sendOffer(socketId).catch((err) => console.error("[rtc] offer failed", err));
   });
 
   socket.on("user-left", ({ socketId, name: leftName, userCount }) => {
@@ -589,7 +589,6 @@ function setupRTCViewer() {
   setShareStatus("Aguardando transmissão do host…", "waiting");
   setupRTCSignaling();
   addSystem("Aguardando stream do host…");
-  setTimeout(() => socket.emit("rtc-request-stream"), 800);
 }
 
 function setupRTCSignaling() {
