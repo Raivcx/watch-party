@@ -49,7 +49,9 @@ function cookies(header) {
 }
 function getSession(header) {
   if (!SESSION_SECRET) return null;
-  const raw = cookies(header).wp_session;
+  let parsedCookies;
+  try { parsedCookies = cookies(header); } catch { return null; }
+  const raw = parsedCookies.wp_session;
   if (!raw) return null;
   const parts = raw.split(".");
   if (parts.length !== 2 || !equal(parts[1], signature(parts[0]))) return null;
@@ -72,7 +74,7 @@ function configReady(res) {
   return false;
 }
 function safePath(value) {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/";
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") && !value.includes("\\") ? value : "/";
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now(), rooms: getRoomCount() }));
@@ -146,6 +148,7 @@ app.get("/api/me", (req, res) => {
 });
 app.get("/api/room/:id", (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: "Invalid room ID" });
+  if (!getSession(req.headers.cookie)) return res.status(401).json({ error: "Authentication required" });
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: "Room not found" });
   res.setHeader("Cache-Control", "no-store");
@@ -153,6 +156,7 @@ app.get("/api/room/:id", (req, res) => {
 });
 app.get("/api/embed/:id", (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: "Invalid room ID" });
+  if (!getSession(req.headers.cookie)) return res.status(401).json({ error: "Authentication required" });
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: "Room not found" });
   if (!["movie", "serie"].includes(room.type)) return res.status(400).json({ error: "Not a movie/serie room" });
