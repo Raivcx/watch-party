@@ -20,6 +20,13 @@
       </header>
       <div id="media-container" aria-live="polite"></div>
       <button id="start-share-btn" type="button" style="display:none">Iniciar compartilhamento</button>
+      <div id="screen-controls" hidden>
+        <span id="screen-status" data-state="waiting">Aguardando transmissão</span>
+        <label id="quality-control">Qualidade <select id="share-quality"><option value="balanced">Equilibrada</option><option value="high">Alta</option><option value="low">Economia</option></select></label>
+        <button id="toggle-audio" type="button">Áudio: ligado</button>
+        <button id="stop-share" type="button">Encerrar transmissão</button>
+        <button id="fullscreen-share" type="button">Tela cheia</button>
+      </div>
     </main>
     <aside id="chat-panel">
       <div id="chat-header"><h2>Atividade da sala</h2><span id="user-count">0 online</span></div>
