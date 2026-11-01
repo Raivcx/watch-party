@@ -1,126 +1,90 @@
 // Watch Party Room — Vanilla JS client
-// Media: VidSrc iframe (movie/serie), YouTube IFrame API, WebRTC screenshare
+// Discord OAuth2 identity · Discord-style UI · WebRTC · iframe · YouTube sync
 
-const socket = io({ transports: ["websocket", "polling"] });
+// ── Auth: fetch Discord identity before connecting ────────────────────────────
+let myUser = null;
+
+async function bootstrap() {
+  try {
+    const res = await fetch("/auth/me");
+    if (!res.ok) {
+      // Not authenticated — redirect to login, returning here after
+      window.location.href = `/auth/login?return=${encodeURIComponent(window.location.pathname)}`;
+      return;
+    }
+    myUser = await res.json(); // { id, username, avatar }
+  } catch {
+    window.location.href = `/auth/login?return=${encodeURIComponent(window.location.pathname)}`;
+    return;
+  }
+  initApp();
+}
+
+bootstrap();
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const messagesEl    = document.getElementById("chat-messages");
+const chatInput     = document.getElementById("chat-input");
+const userCountEl   = document.getElementById("user-count");
+const mediaEl       = document.getElementById("media-container");
+const shareBtn      = document.getElementById("start-share-btn");
+const errorOverlay  = document.getElementById("error-overlay");
+const errorText     = document.getElementById("error-text");
+const kickedOverlay = document.getElementById("kicked-overlay");
+const kickedText    = document.getElementById("kicked-text");
+const membersList   = document.getElementById("members-list");
+const roomTitleEl   = document.getElementById("room-title");
+const roomIconEl    = document.getElementById("room-icon");
+const roomBadgeEl   = document.getElementById("room-badge");
+
 const roomId = window.location.pathname.split("/room/")[1]?.split("/")[0];
-
 if (!roomId) showError("No room ID in the URL.");
-
-const messagesEl   = document.getElementById("chat-messages");
-const chatForm     = document.getElementById("chat-form");
-const chatInput    = document.getElementById("chat-input");
-const userCountEl  = document.getElementById("user-count");
-const mediaEl      = document.getElementById("media-container");
-const shareBtn     = document.getElementById("start-share-btn");
-const errorOverlay = document.getElementById("error-overlay");
-const errorText    = document.getElementById("error-text");
-const nameModal    = document.getElementById("name-modal");
-const nameInput    = document.getElementById("name-input");
-const nameForm     = document.getElementById("name-form");
 
 let myId        = null;
 let isHost      = false;
 let onlineCount = 0;
-let myName      = localStorage.getItem("watchPartyName") || "";
+// Map<socketId, { name, avatar, discordId, isHost }>
+const roomMembers = new Map();
 
-// ── Nome do usuário ───────────────────────────────────────────────────────────
-if (!myName) {
-  nameModal.style.display = "flex";
-  nameInput.focus();
-} else {
-  initSocket();
-}
+// ── Message grouping state ────────────────────────────────────────────────────
+let lastMsgSocketId = null;
+let lastMsgTime     = 0;
+const MSG_GROUP_MS  = 5 * 60 * 1000; // group messages within 5 min
 
-nameForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const val = nameInput.value.trim().slice(0, 20);
-  if (!val) return;
-  myName = val;
-  localStorage.setItem("watchPartyName", myName);
-  nameModal.style.display = "none";
-  initSocket();
-});
-
-// ── Chat ──────────────────────────────────────────────────────────────────────
+// ── Chat rate limit ───────────────────────────────────────────────────────────
 let msgTimestamps = [];
 const MSG_LIMIT   = 5;
 const MSG_WINDOW  = 5000;
 
-chatForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const text = chatInput.value.trim();
-  if (!text) return;
+// ── Socket (lazy init after auth) ────────────────────────────────────────────
+let socket = null;
 
-  const now = Date.now();
-  msgTimestamps = msgTimestamps.filter((t) => now - t < MSG_WINDOW);
-  if (msgTimestamps.length >= MSG_LIMIT) {
-    addSystem("⚠️ Você está enviando mensagens rápido demais. Aguarde um momento.");
-    return;
-  }
-  msgTimestamps.push(now);
+function initApp() {
+  socket = io({ transports: ["websocket", "polling"] });
 
-  socket.emit("chat-message", { text, name: myName });
-  chatInput.value = "";
-});
+  // Chat input: Enter sends
+  chatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendChat();
+    }
+  });
 
-// Enter envia (não duplica com o submit do form, mas garante que
-// Enter dentro do <input> não seja bloqueado por eventos externos)
-chatInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    chatForm.requestSubmit();
-  }
-});
+  // Typing indicator
+  let typingTimer = null;
+  let isTyping = false;
+  chatInput.addEventListener("input", () => {
+    if (!isTyping) { isTyping = true; socket.emit("typing-start"); }
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => { isTyping = false; socket.emit("typing-stop"); }, 1500);
+  });
 
-// Indicador de "digitando"
-let typingTimer = null;
-let isTyping = false;
-chatInput.addEventListener("input", () => {
-  if (!isTyping) {
-    isTyping = true;
-    socket.emit("typing-start");
-  }
-  clearTimeout(typingTimer);
-  typingTimer = setTimeout(() => {
-    isTyping = false;
-    socket.emit("typing-stop");
-  }, 1500);
-});
-
-function addMessage({ socketId, text, name }) {
-  const isSelf = socketId === myId;
-  const displayName = isSelf ? "Você" : (name || socketId.slice(0, 6));
-  const el = document.createElement("div");
-  el.className = "msg" + (isSelf ? " self" : "");
-  el.innerHTML = `<div class="who">${esc(displayName)}</div>${esc(text)}`;
-  messagesEl.appendChild(el);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-function addSystem(text) {
-  const el = document.createElement("div");
-  el.className = "msg system";
-  el.textContent = text;
-  messagesEl.appendChild(el);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = s;
-  return d.innerHTML;
-}
-
-// ── Socket ────────────────────────────────────────────────────────────────────
-function initSocket() {
+  // ── Socket events ───────────────────────────────────────────────────────────
   socket.on("connect", () => {
     addSystem("Conectando à sala…");
     socket.emit("join-room", roomId);
   });
 
-  // Se o socket já estava conectado antes de initSocket ser chamado
-  // (caso do modal de nome: socket conecta imediatamente mas os listeners
-  // só existem depois que o usuário submete o nome), emite join-room direto.
   if (socket.connected) {
     addSystem("Conectando à sala…");
     socket.emit("join-room", roomId);
@@ -133,6 +97,22 @@ function initSocket() {
     isHost      = info.isHost;
     onlineCount = info.userCount || 1;
     updateCountDisplay();
+
+    // Populate members from initial list
+    if (Array.isArray(info.members)) {
+      info.members.forEach(m => {
+        roomMembers.set(m.socketId, {
+          name:      m.username,
+          avatar:    m.avatar,
+          discordId: null, // not exposed in members snapshot
+          isHost:    m.isHost,
+        });
+      });
+      renderMembers();
+    }
+
+    // Set room header
+    setRoomHeader(info.type, info.media);
     addSystem(`Sala pronta · ${isHost ? "Você é o host" : "Você é viewer"}`);
     setupMedia(info.type, info.media);
   });
@@ -145,109 +125,228 @@ function initSocket() {
     setTimeout(() => { window.location.href = "/"; }, 4000);
   });
 
+  socket.on("kicked", ({ message }) => {
+    kickedText.textContent = message || "Você foi removido da sala pelo host.";
+    kickedOverlay.style.display = "flex";
+    setTimeout(() => { window.location.href = "/"; }, 4000);
+  });
+
   socket.on("host-promoted", ({ message }) => {
     isHost = true;
     addSystem(`👑 ${message}`);
-
-    // Remove o vídeo da stream anterior que ainda pode estar no DOM
-    // (o viewer tinha o screen-video do host antigo montado via ontrack)
     cleanupScreenVideo();
-
-    // Viewer que vira host já passou por setupRTCViewer() que setou rtcSetup=true,
-    // então setupScreenshare() retornaria imediatamente sem mostrar o botão.
-    // Fazemos manualmente: configura signaling se ainda não foi, mostra o botão.
-    if (!rtcSetup) {
-      rtcSetup = true;
-      setupRTCSignaling();
-    }
+    if (!rtcSetup) { rtcSetup = true; setupRTCSignaling(); }
     shareBtn.removeEventListener("click", startShare);
     shareBtn.addEventListener("click", startShare);
     shareBtn.style.display = "block";
+    // Update member entry to show host badge
+    renderMembers();
   });
 
   socket.on("host-changed", ({ newHostId, newHostName }) => {
     addSystem(`👑 Novo host: ${esc(newHostName || newHostId.slice(0, 6))}`);
-    // Limpa o vídeo antigo e aguarda nova stream do novo host
     cleanupScreenVideo();
     addSystem("⏳ Aguardando nova transmissão do host…");
+    // Update host flag in members
+    roomMembers.forEach((m, sid) => { m.isHost = sid === newHostId; });
+    renderMembers();
   });
 
-  // Novo host subiu stream — viewers limpam estado antigo e pedem a nova
   socket.on("stream-started", () => {
     if (isHost) return;
     cleanupScreenVideo();
     addSystem("🟢 Nova transmissão disponível, conectando…");
-    // Pequeno delay para o novo host terminar de configurar as tracks
     setTimeout(() => socket.emit("rtc-request-stream"), 600);
   });
 
   socket.on("chat-message", addMessage);
 
-  socket.on("user-joined", ({ socketId, name: joinName, userCount }) => {
+  socket.on("user-joined", ({ socketId, discordId, name, avatar, userCount }) => {
     onlineCount = userCount || onlineCount + 1;
     updateCountDisplay();
-    addSystem(`${esc(joinName || socketId.slice(0, 6))} entrou na sala.`);
-    // WebRTC: host manda offer para novo viewer se estiver compartilhando
+    addSystem(`${esc(name || socketId.slice(0, 6))} entrou na sala.`);
+    roomMembers.set(socketId, { name, avatar, discordId, isHost: false });
+    renderMembers();
     if (localStream) sendOffer(socketId);
   });
 
-  socket.on("user-left", ({ socketId, name: leftName, userCount }) => {
+  socket.on("user-left", ({ socketId, name, userCount }) => {
     onlineCount = userCount || Math.max(1, onlineCount - 1);
     updateCountDisplay();
-    addSystem(`${esc(leftName || socketId.slice(0, 6))} saiu da sala.`);
-    if (peers[socketId]) {
-      peers[socketId].close();
-      delete peers[socketId];
-    }
+    addSystem(`${esc(name || socketId.slice(0, 6))} saiu da sala.`);
+    roomMembers.delete(socketId);
+    renderMembers();
+    if (peers[socketId]) { peers[socketId].close(); delete peers[socketId]; }
   });
 
-  // Notificação para o host quando novo viewer entra na sala de filme
   socket.on("viewer-joined-notify", ({ name: viewerName }) => {
-    // Só relevante para salas de filme/série (o host precisa sincronizar manualmente)
     const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
     const btn = document.getElementById("sync-btn");
-    if (!btn) return; // não é sala de iframe
+    if (!btn) return;
     const displayName = esc(viewerName && viewerName !== "anon" ? viewerName : "Alguém");
     addSystem(`👤 ${displayName} entrou — clique 📍 Sync para sincronizar (você está em ${formatTime(elapsed)}).`);
-    // Pulsa o botão de sync em amarelo por 5s para chamar atenção
-    btn.style.background = "#f39c12";
-    btn.style.color = "#000";
-    setTimeout(() => {
-      btn.style.background = "#2ecc71";
-    }, 5000);
+    btn.style.background = "#f0b132";
+    btn.classList.add("sync-pulse");
+    setTimeout(() => { btn.style.background = "#23a559"; btn.classList.remove("sync-pulse"); }, 5000);
   });
 
-  // Indicador de "digitando"
+  // Typing indicator
   const typingUsers = new Map();
+  const typingEl = document.getElementById("typing-indicator");
   socket.on("user-typing", ({ socketId, name: typingName }) => {
     typingUsers.set(socketId, typingName || socketId.slice(0, 6));
-    updateTypingIndicator(typingUsers);
+    updateTypingIndicator(typingUsers, typingEl);
   });
   socket.on("user-stop-typing", ({ socketId }) => {
     typingUsers.delete(socketId);
-    updateTypingIndicator(typingUsers);
+    updateTypingIndicator(typingUsers, typingEl);
   });
 }
 
-function updateCountDisplay() {
-  userCountEl.textContent = `${onlineCount} online`;
-}
-
-function updateTypingIndicator(typingUsers) {
-  let el = document.getElementById("typing-indicator");
-  if (typingUsers.size === 0) {
-    if (el) el.remove();
+// ── Chat ──────────────────────────────────────────────────────────────────────
+function sendChat() {
+  const text = chatInput.value.trim();
+  if (!text || !socket) return;
+  const now = Date.now();
+  msgTimestamps = msgTimestamps.filter(t => now - t < MSG_WINDOW);
+  if (msgTimestamps.length >= MSG_LIMIT) {
+    addSystem("⚠️ Você está enviando mensagens rápido demais.");
     return;
   }
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "typing-indicator";
-    el.className = "msg system";
-    messagesEl.appendChild(el);
+  msgTimestamps.push(now);
+  socket.emit("chat-message", { text });
+  chatInput.value = "";
+}
+
+// ── Discord-style message rendering ──────────────────────────────────────────
+function addMessage({ socketId, text, name, avatar, ts }) {
+  const isSelf  = socketId === myId;
+  const now     = ts || Date.now();
+  const isCont  = socketId === lastMsgSocketId && (now - lastMsgTime) < MSG_GROUP_MS;
+
+  lastMsgSocketId = socketId;
+  lastMsgTime     = now;
+
+  const displayName = isSelf ? myUser?.username || "Você" : (name || socketId.slice(0, 6));
+  const avatarSrc   = isSelf ? (myUser?.avatar || "") : (avatar || "");
+
+  const el = document.createElement("div");
+  el.className = "msg" + (isSelf ? " self" : "") + (isCont ? " continuation" : "");
+
+  if (isCont) {
+    el.innerHTML = `
+      <div class="avatar-col">
+        <span class="ts-mini">${formatTs(now)}</span>
+      </div>
+      <div class="msg-content">
+        <div class="text">${esc(text)}</div>
+      </div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div class="avatar-col">
+        <img src="${esc(avatarSrc)}" alt="${esc(displayName)}" onerror="this.src=''">
+      </div>
+      <div class="msg-content">
+        <div class="msg-header">
+          <span class="who">${esc(displayName)}</span>
+          <span class="ts">${formatTs(now)}</span>
+        </div>
+        <div class="text">${esc(text)}</div>
+      </div>
+    `;
   }
-  const names = [...typingUsers.values()].slice(0, 3).map(esc);
-  el.textContent = names.join(", ") + (typingUsers.size === 1 ? " está digitando…" : " estão digitando…");
+
+  messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function addSystem(text) {
+  lastMsgSocketId = null; // break message grouping after system messages
+  const el = document.createElement("div");
+  el.className = "msg system";
+  el.innerHTML = `<span class="system-text">${esc(text)}</span>`;
+  messagesEl.appendChild(el);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function esc(s) {
+  if (!s) return "";
+  const d = document.createElement("div");
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+// ── Members panel ─────────────────────────────────────────────────────────────
+function renderMembers() {
+  if (!membersList) return;
+  membersList.innerHTML = "";
+
+  for (const [socketId, m] of roomMembers) {
+    const isSelf = socketId === myId;
+    const item   = document.createElement("div");
+    item.className = "member-item";
+    item.dataset.socketId  = socketId;
+    item.dataset.discordId = m.discordId || "";
+
+    item.innerHTML = `
+      <div class="member-avatar-wrap">
+        <img class="member-avatar" src="${esc(m.avatar || "")}" alt="${esc(m.name)}" onerror="this.src=''">
+        <span class="member-online-dot"></span>
+      </div>
+      <div class="member-info">
+        <div class="member-name">${esc(m.name)}${isSelf ? " <span style='color:var(--dc-text-muted);font-size:11px'>(você)</span>" : ""}</div>
+        ${m.isHost ? '<div class="member-role">👑 Host</div>' : ""}
+      </div>
+    `;
+
+    // Kick button — only visible to host, hidden for self
+    if (isHost && !isSelf && m.discordId) {
+      const kickBtn = document.createElement("button");
+      kickBtn.className = "kick-btn";
+      kickBtn.title = `Remover ${m.name}`;
+      kickBtn.textContent = "✕";
+      kickBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (confirm(`Remover ${m.name} da sala?`)) {
+          socket.emit("kick-user", { discordId: m.discordId });
+        }
+      });
+      item.appendChild(kickBtn);
+    }
+
+    membersList.appendChild(item);
+  }
+}
+
+function updateCountDisplay() {
+  if (userCountEl) userCountEl.textContent = `${onlineCount} online`;
+}
+
+function updateTypingIndicator(typingUsers, el) {
+  if (!el) return;
+  if (typingUsers.size === 0) { el.textContent = ""; return; }
+  const names = [...typingUsers.values()].slice(0, 3).map(n => esc(n));
+  el.textContent = names.join(", ") + (typingUsers.size === 1 ? " está digitando…" : " estão digitando…");
+}
+
+// ── Room header ───────────────────────────────────────────────────────────────
+const TYPE_ICONS  = { movie: "🎬", serie: "📺", youtube: "▶️", screenshare: "🖥️" };
+const TYPE_LABELS = { movie: "Filme", serie: "Série", youtube: "YouTube", screenshare: "Screenshare" };
+
+function setRoomHeader(type, media) {
+  if (!roomIconEl || !roomTitleEl) return;
+  roomIconEl.textContent = TYPE_ICONS[type] || "📺";
+  roomBadgeEl.textContent = TYPE_LABELS[type] || type;
+  roomBadgeEl.style.display = "inline-block";
+
+  if (type === "movie" || type === "serie") {
+    roomTitleEl.textContent = media.title + (media.season ? ` · S${media.season}E${media.episode}` : "");
+  } else if (type === "youtube") {
+    roomTitleEl.textContent = "YouTube Sync";
+  } else if (type === "screenshare") {
+    roomTitleEl.textContent = "Screen Share";
+  }
 }
 
 // ── Media router ──────────────────────────────────────────────────────────────
@@ -257,15 +356,14 @@ function setupMedia(type, media) {
   else if (type === "screenshare")               isHost ? setupScreenshare() : setupRTCViewer();
 }
 
-// ── VidSrc Iframe Player (movie / serie) ─────────────────────────────────────
+// ── VidSrc Iframe Player ──────────────────────────────────────────────────────
 let iframeSources  = [];
 let currentSrcIdx  = 0;
 let currentIframe  = null;
 let iframeLoadedAt = 0;
 
 async function setupIframePlayer(type, media) {
-  // Atualiza o título da aba com o conteúdo da sala
-  document.title = `📺 ${media.title}${media.season ? ` S${media.season}E${media.episode}` : ""} — Watch Party`;
+  document.title = `${TYPE_ICONS[type]} ${media.title}${media.season ? ` S${media.season}E${media.episode}` : ""} — Watch Party`;
 
   let sources;
   try {
@@ -279,51 +377,31 @@ async function setupIframePlayer(type, media) {
     return;
   }
 
-  if (!sources.length) {
-    showError("Nenhuma fonte de vídeo disponível.");
-    return;
-  }
+  if (!sources.length) { showError("Nenhuma fonte de vídeo disponível."); return; }
 
   iframeSources = sources;
   currentSrcIdx = 0;
-
   buildIframeBar(media);
 
-  // Recebe sync do host (manual ou auto-sync ao entrar na sala)
   socket.on("iframe-sync", ({ time, sourceIdx, autoSync }) => {
     if (isHost) return;
     const t = time || 0;
-    const label = autoSync ? "⚡ Sincronizado automaticamente" : "🔄 Sincronizado com o host";
     loadIframe(sourceIdx || 0, t);
-    addSystem(`${label}${t > 5 ? ` em ${formatTime(t)}` : ""}.`);
+    addSystem(`${autoSync ? "⚡ Sincronizado automaticamente" : "🔄 Sincronizado com o host"}${t > 5 ? ` em ${formatTime(t)}` : ""}.`);
   });
 }
 
-/**
- * Carrega o iframe de um provider com seek opcional via parâmetro de URL.
- * @param {number} idx - índice em iframeSources
- * @param {number} startAtSeconds - timestamp em segundos (0 = início)
- */
 function loadIframe(idx, startAtSeconds = 0) {
   if (!iframeSources[idx]) return;
   currentSrcIdx = idx;
-
-  if (currentIframe) {
-    currentIframe.remove();
-    currentIframe = null;
-  }
+  if (currentIframe) { currentIframe.remove(); currentIframe = null; }
   if (window._iframeWatchdog) { clearTimeout(window._iframeWatchdog); window._iframeWatchdog = null; }
 
-  // Injeta parâmetro de seek dependendo do provider
   let url = iframeSources[idx].url;
   if (startAtSeconds > 5) {
     const sep = url.includes("?") ? "&" : "?";
-    if (url.includes("moviesnexus")) {
-      url += `${sep}startAt=${startAtSeconds}`;
-    } else if (url.includes("vidcore")) {
-      url += `${sep}t=${startAtSeconds}`;
-    }
-    // vidsrc.to e vidsrc.cc não suportam seek por URL — viewer começa do início
+    if (url.includes("moviesnexus")) url += `${sep}startAt=${startAtSeconds}`;
+    else if (url.includes("vidcore")) url += `${sep}t=${startAtSeconds}`;
   }
 
   const iframe = document.createElement("iframe");
@@ -331,22 +409,18 @@ function loadIframe(idx, startAtSeconds = 0) {
   iframe.allowFullscreen = true;
   iframe.allow           = "autoplay; fullscreen; encrypted-media; picture-in-picture";
   iframe.style.cssText   = "width:100%;height:100%;border:none;display:block;background:#000;";
-
   mediaEl.appendChild(iframe);
   currentIframe  = iframe;
-  // Ajusta iframeLoadedAt para que o timer do host reflita o tempo correto
   iframeLoadedAt = Date.now() - (startAtSeconds * 1000);
 
   const seekLabel = startAtSeconds > 5 ? ` · ⏩ ${formatTime(startAtSeconds)}` : "";
   addSystem(`▶ ${iframeSources[idx].provider} · ${iframeSources[idx].label || "Auto"}${seekLabel}`);
 
-  // Watchdog: se o iframe não responder em 14s, tenta próximo do mesmo grupo
   const baseUrl = iframeSources[idx].url.split("?")[0];
   window._iframeWatchdog = setTimeout(() => {
     if (currentIframe && currentIframe.src.startsWith(baseUrl)) {
-      const nextInGroup = iframeSources
-        .map((s, i) => ({ ...s, i }))
-        .filter((s) => s.lang === iframeSources[idx].lang && s.i !== idx);
+      const nextInGroup = iframeSources.map((s,i) => ({...s,i}))
+        .filter(s => s.lang === iframeSources[idx].lang && s.i !== idx);
       if (nextInGroup.length > 0) {
         addSystem(`⏱ Sem resposta — tentando ${nextInGroup[0].provider}…`);
         loadIframe(nextInGroup[0].i, startAtSeconds);
@@ -355,10 +429,10 @@ function loadIframe(idx, startAtSeconds = 0) {
   }, 14000);
 }
 
-// Bloqueia popups e navegação indesejada dos players.
+// Block popup attempts from player iframes
 (function blockPopups() {
   const _open = window.open.bind(window);
-  window.open = function (url, target, features) {
+  window.open = function(url, target, features) {
     if (!url) return _open(url, target, features);
     console.warn("[security] window.open bloqueado:", url);
     return null;
@@ -368,168 +442,127 @@ function loadIframe(idx, startAtSeconds = 0) {
 function buildIframeBar(media) {
   const bar = document.createElement("div");
   bar.id = "iframe-bar";
-  bar.style.cssText = `
-    position:absolute;top:0;left:0;right:0;z-index:20;
-    background:rgba(0,0,0,0.82);backdrop-filter:blur(6px);
-    padding:5px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
-    font-size:12px;color:#fff;min-height:36px;
-  `;
 
-  const title = document.createElement("span");
-  title.textContent = media.title + (media.season ? ` · S${media.season}E${media.episode}` : "");
-  title.style.cssText = "opacity:0.65;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;";
-  bar.appendChild(title);
+  // Title
+  const titleSpan = document.createElement("span");
+  titleSpan.textContent = media.title + (media.season ? ` · S${media.season}E${media.episode}` : "");
+  titleSpan.style.cssText = "opacity:.6;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;";
+  bar.appendChild(titleSpan);
 
-  const sep = document.createElement("span");
-  sep.textContent = "·";
-  sep.style.opacity = "0.3";
-  bar.appendChild(sep);
+  const dot = document.createElement("span");
+  dot.textContent = "·"; dot.style.opacity = ".3";
+  bar.appendChild(dot);
 
   const groups = [
-    { key: "dub",  label: "🇧🇷 DUB",  color: "#e74c3c", title: "Dublado PT-BR" },
-    { key: "leg",  label: "🇧🇷 LEG",  color: "#3498db", title: "Legendado PT-BR" },
-    { key: "auto", label: "EN/Auto",   color: "#555",    title: "Inglês / Automático" },
+    { key:"dub",  label:"🇧🇷 DUB",  color:"#e74c3c", title:"Dublado PT-BR" },
+    { key:"leg",  label:"🇧🇷 LEG",  color:"#3498db", title:"Legendado PT-BR" },
+    { key:"auto", label:"EN/Auto", color:"#555",    title:"Inglês / Auto" },
   ];
+  const groupIdx = { dub:0, leg:0, auto:0 };
+  let activeKey = null;
 
-  let activeGroupKey = null;
-  const groupIdx = { dub: 0, leg: 0, auto: 0 };
-
-  function activateGroup(key, color) {
-    activeGroupKey = key;
-    bar.querySelectorAll("[data-lang-group]").forEach((b) => {
-      const g = groups.find((g) => g.key === b.dataset.langGroup);
-      b.style.background = (b.dataset.langGroup === key) ? (g?.color || color) : "transparent";
+  function activateGroup(key) {
+    activeKey = key;
+    bar.querySelectorAll("[data-lang-group]").forEach(b => {
+      const g = groups.find(g => g.key === b.dataset.langGroup);
+      b.style.background = b.dataset.langGroup === key ? (g?.color || "#555") : "transparent";
     });
   }
 
   groups.forEach(({ key, label, color, title: ttip }) => {
-    const srcs = iframeSources.filter((s) => s.lang === key);
-    if (!srcs.length) return;
-
+    if (!iframeSources.some(s => s.lang === key)) return;
     const btn = document.createElement("button");
     btn.dataset.langGroup = key;
     btn.textContent = label;
     btn.title = ttip;
-    const isDefault = key === "dub";
-    btn.style.cssText = `
-      padding:3px 9px;border:1px solid ${color};
-      background:${isDefault ? color : "transparent"};
-      color:#fff;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;
-    `;
-
+    btn.style.cssText = `padding:3px 9px;border:1px solid ${color};background:${key==="dub"?color:"transparent"};color:#fff;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;`;
     btn.addEventListener("click", () => {
-      activateGroup(key, color);
-      const groupSrcs = iframeSources.map((s, i) => ({ ...s, idx: i })).filter((s) => s.lang === key);
-      const next = groupSrcs[groupIdx[key] % groupSrcs.length];
-      groupIdx[key] = (groupIdx[key] + 1) % groupSrcs.length;
-      loadIframe(next.idx);
+      activateGroup(key);
+      const srcs = iframeSources.map((s,i) => ({...s,i})).filter(s => s.lang === key);
+      const next = srcs[groupIdx[key] % srcs.length];
+      groupIdx[key] = (groupIdx[key]+1) % srcs.length;
+      loadIframe(next.i);
     });
-
     bar.appendChild(btn);
   });
 
-  // Spacer
   const spacer = document.createElement("div");
   spacer.style.flex = "1";
   bar.appendChild(spacer);
 
-  // Botão fullscreen
+  // Fullscreen button
   const fsBtn = document.createElement("button");
-  fsBtn.textContent = "⛶";
-  fsBtn.title = "Fullscreen";
-  fsBtn.style.cssText = `
-    padding:3px 8px;background:transparent;color:#fff;font-size:14px;
-    border:1px solid #555;border-radius:4px;cursor:pointer;white-space:nowrap;
-  `;
+  fsBtn.textContent = "⛶"; fsBtn.title = "Fullscreen";
+  fsBtn.style.cssText = "padding:3px 8px;background:transparent;color:#fff;font-size:14px;border:1px solid #555;border-radius:4px;cursor:pointer;";
   fsBtn.addEventListener("click", () => {
-    const target = currentIframe || mediaEl;
-    if (target.requestFullscreen) target.requestFullscreen();
-    else if (target.webkitRequestFullscreen) target.webkitRequestFullscreen();
+    const t = currentIframe || mediaEl;
+    if (t.requestFullscreen) t.requestFullscreen();
+    else if (t.webkitRequestFullscreen) t.webkitRequestFullscreen();
   });
   bar.appendChild(fsBtn);
 
-  // Botão Sync — só o host vê; viewers veem o hint "aguardando"
   if (isHost) {
     const syncBtn = document.createElement("button");
     syncBtn.id = "sync-btn";
     syncBtn.textContent = "📍 Sync";
     syncBtn.title = "Envia sua posição atual para todos os viewers";
-    syncBtn.style.cssText = `
-      padding:3px 12px;background:#2ecc71;color:#000;font-weight:700;
-      border:none;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;
-      transition:background 0.3s;
-    `;
+    syncBtn.style.cssText = "padding:3px 12px;background:#23a559;color:#fff;font-weight:700;border:none;border-radius:4px;cursor:pointer;font-size:11px;transition:background 0.3s;";
     syncBtn.addEventListener("click", () => {
       const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
       socket.emit("iframe-sync", { time: elapsed, sourceIdx: currentSrcIdx });
       addSystem(`📍 Sync enviado (${formatTime(elapsed)} desde o início).`);
       syncBtn.textContent = "✅";
-      syncBtn.style.background = "#2ecc71";
       setTimeout(() => { syncBtn.textContent = "📍 Sync"; }, 2000);
     });
     bar.appendChild(syncBtn);
 
-    // Timer: atualiza o title do botão Sync com a posição atual a cada 5s
     setInterval(() => {
       const el = document.getElementById("sync-btn");
       if (!el) return;
-      const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
-      el.title = `Posição atual: ${formatTime(elapsed)} — clique para sincronizar todos`;
+      el.title = `Posição atual: ${formatTime(Math.floor((Date.now()-iframeLoadedAt)/1000))} — clique para sincronizar`;
     }, 5000);
-
   } else {
     const hint = document.createElement("span");
     hint.textContent = "⏳ aguardando host";
-    hint.style.cssText = "font-size:10px;color:#8b8ba0;white-space:nowrap;";
+    hint.style.cssText = "font-size:10px;color:var(--dc-text-muted);";
     bar.appendChild(hint);
   }
 
   mediaEl.style.position = "relative";
   mediaEl.appendChild(bar);
-  mediaEl.style.paddingTop = "36px";
+  mediaEl.style.paddingTop = "38px";
 
-  // Carrega o primeiro DUB disponível por padrão
-  const firstDub = iframeSources.findIndex((s) => s.lang === "dub");
+  const firstDub = iframeSources.findIndex(s => s.lang === "dub");
   loadIframe(firstDub >= 0 ? firstDub : 0);
-  if (firstDub >= 0) activateGroup("dub", "#e74c3c");
-  else activateGroup("auto", "#555");
+  activateGroup(firstDub >= 0 ? "dub" : "auto");
 }
 
-// ── YouTube (IFrame API + sync) ───────────────────────────────────────────────
-let ytPlayer   = null;
-let ytReady    = false;
-let suppressYT = false;
+// ── YouTube ───────────────────────────────────────────────────────────────────
+let ytPlayer = null, ytReady = false, suppressYT = false;
 
 function setupYouTube(videoId) {
-  // Atualiza título da aba para salas de YouTube também
-  document.title = `▶ YouTube Watch Party`;
-
-  const placeholder = document.createElement("div");
-  placeholder.id = "yt-player";
-  placeholder.style.cssText = "width:100%;height:100%;";
-  mediaEl.appendChild(placeholder);
-
+  document.title = "▶ YouTube Watch Party";
+  const ph = document.createElement("div");
+  ph.id = "yt-player"; ph.style.cssText = "width:100%;height:100%;";
+  mediaEl.appendChild(ph);
   const tag = document.createElement("script");
   tag.src = "https://www.youtube.com/iframe_api";
   document.head.appendChild(tag);
-
   window.onYouTubeIframeAPIReady = () => {
     ytPlayer = new YT.Player("yt-player", {
-      videoId,
-      width: "100%", height: "100%",
-      playerVars: { autoplay: 0, rel: 0, modestbranding: 1 },
+      videoId, width:"100%", height:"100%",
+      playerVars: { autoplay:0, rel:0, modestbranding:1 },
       events: {
         onReady() { ytReady = true; addSystem("YouTube pronto. Sync ativo."); },
         onStateChange(e) {
           if (suppressYT || !ytReady) return;
           const t = ytPlayer.getCurrentTime();
-          if      (e.data === YT.PlayerState.PLAYING) socket.emit("yt-action", { action: "play",  time: t });
-          else if (e.data === YT.PlayerState.PAUSED)  socket.emit("yt-action", { action: "pause", time: t });
+          if      (e.data === YT.PlayerState.PLAYING) socket.emit("yt-action", { action:"play",  time:t });
+          else if (e.data === YT.PlayerState.PAUSED)  socket.emit("yt-action", { action:"pause", time:t });
         },
       },
     });
   };
-
   socket.on("yt-action", ({ action, time }) => {
     if (!ytReady || !ytPlayer) return;
     suppressYT = true;
@@ -540,15 +573,16 @@ function setupYouTube(videoId) {
   });
 }
 
-// ── WebRTC Screen Share ───────────────────────────────────────────────────────
+// ── WebRTC ────────────────────────────────────────────────────────────────────
 let localStream = null;
 const peers     = {};
 let rtcSetup    = false;
+let _sharingInProgress = false;
 
 const ICE = { iceServers: [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
-] };
+]};
 
 function setupScreenshare() {
   if (rtcSetup) return; rtcSetup = true;
@@ -568,7 +602,6 @@ function setupRTCViewer() {
 
 function setupRTCSignaling() {
   socket.on("rtc-request-stream", ({ from }) => { if (localStream) sendOffer(from); });
-
   socket.on("rtc-offer", async ({ from, sdp }) => {
     addSystem("Recebendo stream…");
     const pc = newPC(from, false);
@@ -577,12 +610,10 @@ function setupRTCSignaling() {
     await pc.setLocalDescription(answer);
     socket.emit("rtc-answer", { to: from, sdp: answer });
   });
-
   socket.on("rtc-answer", async ({ from, sdp }) => {
     const pc = peers[from];
     if (pc) await pc.setRemoteDescription(new RTCSessionDescription(sdp));
   });
-
   socket.on("rtc-ice", async ({ from, candidate }) => {
     const pc = peers[from];
     if (!pc) return;
@@ -590,50 +621,31 @@ function setupRTCSignaling() {
   });
 }
 
-let _sharingInProgress = false;
-
 async function startShare() {
-  // Evita múltiplas chamadas simultâneas (duplo-clique, listener duplicado)
   if (_sharingInProgress) return;
   _sharingInProgress = true;
-
   try {
-    // Fecha peer connections antigas antes de criar novas
     closeAllPeers();
-
     localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-
-    // Remove vídeo antigo se ainda existir no DOM
     cleanupScreenVideo();
-
     const video = document.createElement("video");
-    video.id = "screen-video";
-    video.autoplay = true; video.playsInline = true; video.muted = true;
+    video.id = "screen-video"; video.autoplay = true; video.playsInline = true; video.muted = true;
     video.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
     video.srcObject = localStream;
     mediaEl.appendChild(video);
     shareBtn.style.display = "none";
     addSystem("Compartilhando sua tela.");
-
-    // Avisa todos os viewers que a nova stream está disponível
     socket.emit("stream-started");
-
     localStream.getVideoTracks()[0].onended = () => {
-      video.remove(); localStream = null;
-      _sharingInProgress = false;
+      video.remove(); localStream = null; _sharingInProgress = false;
       closeAllPeers();
       shareBtn.style.display = "block";
       addSystem("Compartilhamento encerrado.");
     };
   } catch (err) {
     _sharingInProgress = false;
-    // NotAllowedError = usuário cancelou o picker ou negou permissão
-    if (err.name === "NotAllowedError") {
-      addSystem("Compartilhamento cancelado.");
-    } else {
-      addSystem(`Erro ao compartilhar: ${err.message || err.name}`);
-      console.error("[screenshare]", err);
-    }
+    if (err.name === "NotAllowedError") addSystem("Compartilhamento cancelado.");
+    else { addSystem(`Erro ao compartilhar: ${err.message || err.name}`); console.error("[screenshare]", err); }
   }
 }
 
@@ -677,37 +689,29 @@ function newPC(peerId, isHostPeer) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Remove o elemento #screen-video do DOM, para as tracks e limpa srcObject. */
 function cleanupScreenVideo() {
   const v = document.getElementById("screen-video");
   if (v) {
-    if (v.srcObject) {
-      v.srcObject.getTracks().forEach((t) => t.stop());
-      v.srcObject = null;
-    }
+    if (v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
     v.remove();
   }
 }
 
-/** Fecha e remove todas as RTCPeerConnections abertas. */
 function closeAllPeers() {
-  for (const id of Object.keys(peers)) {
-    peers[id].close();
-    delete peers[id];
-  }
+  for (const id of Object.keys(peers)) { peers[id].close(); delete peers[id]; }
 }
 
 function formatTime(s) {
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
   return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
 }
 
-function showError(msg) {
-  errorText.textContent = msg;
-  errorOverlay.style.display = "flex";
+function formatTs(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" });
 }
 
-
-
-
-
+function showError(msg) {
+  if (errorText)    errorText.textContent = msg;
+  if (errorOverlay) errorOverlay.style.display = "flex";
+}
