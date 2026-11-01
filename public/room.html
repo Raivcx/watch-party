@@ -8,42 +8,73 @@
 </head>
 <body>
   <div id="app">
+
+    <!-- Left: media panel -->
     <div id="media-panel">
-      <div id="media-container">
-        <!-- Injetado pelo room.js: iframe VidSrc, YT player, ou vídeo WebRTC -->
+      <!-- Room header bar -->
+      <div id="room-header">
+        <span class="room-icon" id="room-icon">📺</span>
+        <span class="room-title" id="room-title">Carregando…</span>
+        <span class="room-badge" id="room-badge" style="display:none"></span>
       </div>
+
+      <!-- Media area (injected by room.js) -->
+      <div id="media-container"></div>
+
+      <!-- Screen share start button -->
       <button id="start-share-btn" style="display:none">Iniciar Screen Share</button>
     </div>
 
-    <div id="chat-panel">
-      <div id="chat-header">
-        <h2>Watch Party Chat</h2>
-        <span id="user-count">1 online</span>
+    <!-- Right: chat + members -->
+    <div id="right-column">
+
+      <!-- Chat panel -->
+      <div id="chat-panel">
+        <div id="chat-header">
+          <span class="channel-name" id="chat-channel-name">watch-party</span>
+          <span id="user-count">1 online</span>
+        </div>
+
+        <div id="chat-messages"></div>
+
+        <div id="typing-area">
+          <span id="typing-indicator"></span>
+        </div>
+
+        <div id="chat-input-wrapper">
+          <div id="chat-input-box">
+            <input
+              id="chat-input"
+              placeholder="Enviar mensagem…"
+              maxlength="500"
+              autocomplete="off"
+            >
+          </div>
+        </div>
       </div>
-      <div id="chat-messages"></div>
-      <form id="chat-form" autocomplete="off">
-        <input id="chat-input" placeholder="Digite uma mensagem…" maxlength="500">
-        <button type="submit">Enviar</button>
-      </form>
+
+      <!-- Members panel -->
+      <div id="members-panel">
+        <div class="members-group-label">Online</div>
+        <div id="members-list"></div>
+      </div>
+
     </div>
   </div>
 
-  <!-- Modal de nome de usuário -->
-  <div id="name-modal">
-    <div id="name-modal-box">
-      <h2>Como quer ser chamado?</h2>
-      <p>Seu nome aparecerá no chat da sala.</p>
-      <form id="name-form" autocomplete="off">
-        <input id="name-input" placeholder="Seu apelido…" maxlength="20" required>
-        <button type="submit">Entrar</button>
-      </form>
-    </div>
-  </div>
-
+  <!-- Error overlay -->
   <div id="error-overlay">
     <div id="error-box">
       <h1>Sala Indisponível</h1>
       <p id="error-text">Esta sala não existe ou expirou.</p>
+    </div>
+  </div>
+
+  <!-- Kicked overlay -->
+  <div id="kicked-overlay">
+    <div id="kicked-box">
+      <h2>Você foi removido</h2>
+      <p id="kicked-text">O host removeu você desta sala.</p>
     </div>
   </div>
 

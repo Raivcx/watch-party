@@ -7,32 +7,111 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      background: #0f0f14;
-      color: #e8e8f0;
+      font-family: "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      background: #313338;
+      color: #dbdee1;
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       padding: 24px;
+    }
+
+    .card {
+      background: #2b2d31;
+      border: 1px solid #3f4147;
+      border-radius: 8px;
+      padding: 40px 48px;
+      max-width: 520px;
+      width: 100%;
       text-align: center;
     }
-    .card {
-      background: #1a1a24;
-      border: 1px solid #2e2e3c;
-      border-radius: 16px;
-      padding: 40px 48px;
-      max-width: 560px;
-      width: 100%;
+
+    .logo { font-size: 48px; margin-bottom: 16px; }
+    h1    { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+    .sub  { color: #80848e; font-size: 14px; margin-bottom: 32px; }
+
+    /* Discord login button */
+    .btn-discord {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: #5865f2;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 12px 24px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, transform 0.1s;
     }
-    h1 { font-size: 28px; margin-bottom: 8px; }
-    .sub { color: #8b8ba0; font-size: 14px; margin-bottom: 32px; }
-    .cmd-list { list-style: none; text-align: left; display: flex; flex-direction: column; gap: 12px; }
-    .cmd-item {
-      background: #0f0f14;
-      border: 1px solid #2e2e3c;
+    .btn-discord:hover { background: #4752c4; }
+    .btn-discord:active { transform: scale(0.98); }
+    .btn-discord svg { width: 22px; height: 22px; flex-shrink: 0; }
+
+    /* Logged-in user bar */
+    .user-bar {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      background: #1e1f22;
       border-radius: 8px;
-      padding: 12px 16px;
+      padding: 10px 16px;
+      margin-bottom: 24px;
+    }
+    .user-bar img {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+    .user-bar .uname {
+      font-size: 14px;
+      font-weight: 600;
+      flex: 1;
+      text-align: left;
+    }
+    .user-bar .logout-link {
+      font-size: 12px;
+      color: #80848e;
+      text-decoration: none;
+    }
+    .user-bar .logout-link:hover { color: #ed4245; }
+
+    /* Error banner */
+    .error-banner {
+      display: none;
+      background: rgba(237,66,69,0.15);
+      border: 1px solid #ed4245;
+      color: #ed4245;
+      padding: 10px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+
+    /* Command list */
+    .divider {
+      border: none;
+      border-top: 1px solid #3f4147;
+      margin: 28px 0;
+    }
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #80848e;
+      text-align: left;
+      margin-bottom: 12px;
+    }
+    .cmd-list { list-style: none; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+    .cmd-item {
+      background: #1e1f22;
+      border-radius: 4px;
+      padding: 10px 14px;
     }
     .cmd-item code {
       display: block;
@@ -41,22 +120,28 @@
       font-family: "Consolas", "Fira Code", monospace;
       margin-bottom: 4px;
     }
-    .cmd-item span { color: #8b8ba0; font-size: 12px; }
+    .cmd-item span { color: #80848e; font-size: 12px; }
     .badge {
       display: inline-block;
-      padding: 2px 7px;
-      border-radius: 4px;
+      padding: 1px 6px;
+      border-radius: 3px;
       font-size: 10px;
       font-weight: 700;
       margin-right: 4px;
-      vertical-align: middle;
     }
     .badge-dub  { background: #c0392b; color: #fff; }
     .badge-leg  { background: #2980b9; color: #fff; }
     .badge-yt   { background: #ff0000; color: #fff; }
-    .badge-rtc  { background: #2ecc71; color: #000; }
-    footer { margin-top: 28px; color: #8b8ba0; font-size: 12px; }
+    .badge-rtc  { background: #23a559; color: #fff; }
+
+    footer {
+      margin-top: 24px;
+      font-size: 12px;
+      color: #80848e;
+    }
     footer a { color: #5865f2; text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
     @media (max-width: 480px) {
       .card { padding: 28px 20px; }
     }
@@ -64,46 +149,103 @@
 </head>
 <body>
   <div class="card">
-    <h1>📺 Watch Party</h1>
-    <p class="sub">Use os comandos do Discord para criar uma sala sincronizada.</p>
+    <div class="logo">📺</div>
+    <h1>Watch Party</h1>
+    <p class="sub">Assista filmes e séries sincronizados com seus amigos do Discord.</p>
 
-    <ul class="cmd-list">
-      <li class="cmd-item">
-        <code>/watch type:Movie name:Inception</code>
-        <span>
-          <span class="badge badge-dub">🇧🇷 DUB</span>
-          <span class="badge badge-leg">🇧🇷 LEG</span>
-          Filme com player integrado, seleção de idioma PT-BR
-        </span>
-      </li>
-      <li class="cmd-item">
-        <code>/watch type:Series name:Supernatural</code>
-        <span>
-          <span class="badge badge-dub">🇧🇷 DUB</span>
-          <span class="badge badge-leg">🇧🇷 LEG</span>
-          Série — escolhe temporada e episódio via pop-up
-        </span>
-      </li>
-      <li class="cmd-item">
-        <code>/yt link:https://youtu.be/dQw4w9WgXcQ</code>
-        <span>
-          <span class="badge badge-yt">▶ YT</span>
-          YouTube com sincronização automática de play/pause/seek
-        </span>
-      </li>
-      <li class="cmd-item">
-        <code>/screenshare</code>
-        <span>
-          <span class="badge badge-rtc">📡 RTC</span>
-          Compartilhamento de tela em tempo real via WebRTC
-        </span>
-      </li>
-    </ul>
+    <!-- Error banner (shown via query param) -->
+    <div class="error-banner" id="error-banner"></div>
 
-    <footer>
-      Feito com Discord.js · Socket.IO · WebRTC<br>
-      <a href="https://github.com/Raivcx/watch-party" target="_blank" rel="noopener">Ver no GitHub</a>
-    </footer>
+    <!-- Logged-in user bar (shown via JS) -->
+    <div class="user-bar" id="user-bar">
+      <img id="user-avatar" src="" alt="">
+      <span class="uname" id="user-name"></span>
+      <a class="logout-link" href="/auth/logout">Sair</a>
+    </div>
+
+    <!-- Login button (shown when not authenticated) -->
+    <div id="login-section">
+      <a class="btn-discord" href="/auth/login">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057c.002.022.015.043.032.055a19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+        </svg>
+        Entrar com Discord
+      </a>
+    </div>
+
+    <div id="commands-section" style="display:none">
+      <hr class="divider">
+      <p class="section-label">Comandos disponíveis</p>
+      <ul class="cmd-list">
+        <li class="cmd-item">
+          <code>/watch type:Movie name:Inception</code>
+          <span>
+            <span class="badge badge-dub">🇧🇷 DUB</span>
+            <span class="badge badge-leg">🇧🇷 LEG</span>
+            Filme com player integrado, seleção de idioma PT-BR
+          </span>
+        </li>
+        <li class="cmd-item">
+          <code>/watch type:Series name:Supernatural</code>
+          <span>
+            <span class="badge badge-dub">🇧🇷 DUB</span>
+            <span class="badge badge-leg">🇧🇷 LEG</span>
+            Série — escolhe temporada e episódio via pop-up
+          </span>
+        </li>
+        <li class="cmd-item">
+          <code>/yt link:https://youtu.be/dQw4w9WgXcQ</code>
+          <span>
+            <span class="badge badge-yt">▶ YT</span>
+            YouTube com sincronização automática de play/pause/seek
+          </span>
+        </li>
+        <li class="cmd-item">
+          <code>/screenshare</code>
+          <span>
+            <span class="badge badge-rtc">📡 RTC</span>
+            Compartilhamento de tela em tempo real via WebRTC
+          </span>
+        </li>
+      </ul>
+    </div>
   </div>
+
+  <footer>
+    Feito com Discord.js · Socket.IO · WebRTC ·
+    <a href="https://github.com/Raivcx/watch-party" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+
+  <script>
+    // Show error banner from query param
+    const params = new URLSearchParams(location.search);
+    const errMap = {
+      no_code:       "Autorização cancelada.",
+      invalid_state: "Erro de segurança na autenticação. Tente novamente.",
+      token_failed:  "Falha ao obter token do Discord.",
+      auth_failed:   "Erro na autenticação. Tente novamente.",
+    };
+    const errKey = params.get("error");
+    if (errKey && errMap[errKey]) {
+      const el = document.getElementById("error-banner");
+      el.textContent = errMap[errKey];
+      el.style.display = "block";
+    }
+
+    // Check if already logged in
+    fetch("/auth/me").then(r => {
+      if (!r.ok) return null;
+      return r.json();
+    }).then(user => {
+      if (!user) return;
+      // Show user bar
+      document.getElementById("user-avatar").src = user.avatar;
+      document.getElementById("user-name").textContent = user.username;
+      document.getElementById("user-bar").style.display = "flex";
+      // Hide login, show commands
+      document.getElementById("login-section").style.display = "none";
+      document.getElementById("commands-section").style.display = "block";
+    }).catch(() => {});
+  </script>
 </body>
 </html>
