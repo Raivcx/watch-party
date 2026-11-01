@@ -25,7 +25,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "32kb" }));
-app.use(express.static(join(root, "public")));
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -33,6 +32,7 @@ app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; frame-src https:; connect-src 'self' https://discord.com wss: ws:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'");
   next();
 });
+app.use(express.static(join(root, "public")));
 
 function signature(id) {
   return createHmac("sha256", SESSION_SECRET || "missing-secret").update(id).digest("base64url");
