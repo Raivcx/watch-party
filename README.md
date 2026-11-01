@@ -1,58 +1,29 @@
 # Watch Party Platform
 
-Discord bot + real-time web server for synchronized watch parties: movies/series (Pomfy), YouTube sync, and WebRTC screen sharing with live chat.
+Discord bot and real-time web application for watch parties, movie/series embeds and WebRTC screen sharing.
 
-## Quick Start (Local)
+## Setup
 
-```bash
-cd watch-party
-cp .env.example .env
-# Fill in DISCORD_TOKEN, CLIENT_ID, TMDB_API_KEY
-npm install
-npm run deploy-commands   # register slash commands (run once)
-npm start                 # starts Express + Socket.IO + Discord bot
-```
+1. Copy `.env.example` to `.env`.
+2. Configure `DISCORD_TOKEN`, `CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `SESSION_SECRET`, `DISCORD_REDIRECT_URI`, `PUBLIC_URL` and `TMDB_API_KEY`.
+3. Register the exact callback URL in Discord Developer Portal. For local development: `http://localhost:3000/auth/discord/callback`.
+4. Run `npm install`, `npm run deploy-commands` and `npm start`.
+5. Open the app, authenticate with Discord and join a room created with a bot command.
 
-Open `http://localhost:3000` for the landing page.
+Generate a session secret with `openssl rand -base64 48`. Never commit real credentials.
 
-## Commands (in Discord)
+## Authentication and security
 
-| Command | Example | Result |
-|---------|---------|--------|
-| `/watch movie <name>` | `/watch movie Inception` | Room with Pomfy movie player |
-| `/watch serie <name>` | `/watch serie Breaking Bad` | Room; bot asks for season/episode |
-| `/yt <link>` | `/yt https://youtu.be/dQw4w9WgXcQ` | Room with synced YouTube player |
-| `/screenshare` | `/screenshare` | Room; host shares screen via WebRTC |
+The app requests only Discord OAuth2 `identify`. The browser cannot choose its display name or Discord ID: the server exchanges the OAuth code, retrieves the profile from Discord and issues a signed HttpOnly session cookie. Socket.IO requires this session. The room creator's Discord ID is the initial host identity. WebRTC signaling is limited to the same screen-share room and host/viewer peer pairs. The arbitrary URL subtitle proxy is disabled to prevent SSRF.
 
-## Architecture
+The session store is in memory; users must authenticate again after a process restart. Use a shared persistent session store before running multiple instances.
 
-```
-watch-party/
-├── server.js              # Express + Socket.IO (chat, YT sync, WebRTC signaling)
-├── bot/
-│   ├── index.js           # Discord bot — slash command listeners
-│   └── deploy-commands.js # One-time slash command registration
-├── lib/
-│   ├── roomStore.js       # In-memory room store (create/get/prune)
-│   ├── tmdb.js            # TMDB search API wrapper
-│   └── youtube.js         # YouTube ID extraction
-├── public/
-│   ├── index.html         # Landing page
-│   ├── room.html          # Room layout (75% media / 25% chat)
-│   ├── css/style.css
-│   └── js/room.js         # Chat, YT sync, Pomfy iframe, WebRTC client
-├── package.json
-└── .env.example
-```
+## Media limitations
 
-### How it works
+Movie and series sources are third-party embeds. Cross-origin iframe providers do not expose a common playback API, so universal automatic play/pause/seek synchronization cannot be guaranteed. The current sync action is best-effort and providers may ignore URL seek parameters.
 
-- **Discord bot** runs in the same Node process as the web server (Render free tier = 1 web service).
-- **Rooms** are stored in-memory (`Map`). Render's free tier gives ~512 MB RAM — plenty for dozens of concurrent rooms. Idle rooms auto-prune after 6 hours.
-- **YouTube sync** uses the IFrame Player API. Play/pause/seek events are broadcast over Socket.IO. A `suppressYTEvent` flag prevents echo loops.
-- **Screen sharing** uses WebRTC. The backend Socket.IO server relays SDP offers/answers and ICE candidates between peers. The host calls `getDisplayMedia()` and streams to each viewer via a peer connection.
-- **Chat** is plain Socket.IO broadcast within the room.
+Screen sharing currently uses host-to-viewer peer-to-peer WebRTC. It is suitable only for small rooms and is not an SFU or Discord-style multi-user simultaneous screen sharing. Larger rooms require an SFU (such as LiveKit or mediasoup) and TURN infrastructure.
 
-## Deployment (Free Tier)
+## Deployment
 
-See [DEPLOY.md](DEPLOY.md) for full Render + Supabase + Discord setup.
+For Render, configure all required environment variables in the service dashboard and register `https://YOUR_HOST/auth/discord/callback` in Discord Developer Portal. Use HTTPS in production. In-memory rooms and sessions are cleared on restart and are not shared between instances.

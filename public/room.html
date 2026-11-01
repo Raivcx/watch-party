@@ -3,50 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Watch Party Room</title>
+  <meta name="theme-color" content="#101116">
+  <title>Watch Party</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
   <div id="app">
-    <div id="media-panel">
-      <div id="media-container">
-        <!-- Injetado pelo room.js: iframe VidSrc, YT player, ou vídeo WebRTC -->
-      </div>
-      <button id="start-share-btn" style="display:none">Iniciar Screen Share</button>
-    </div>
-
-    <div id="chat-panel">
-      <div id="chat-header">
-        <h2>Watch Party Chat</h2>
-        <span id="user-count">1 online</span>
-      </div>
-      <div id="chat-messages"></div>
+    <main id="media-panel">
+      <header id="room-toolbar">
+        <a class="brand" href="/">WATCH PARTY</a>
+        <div class="room-user">
+          <img id="user-avatar" alt="" hidden>
+          <span id="user-name">Conectando...</span>
+          <a href="/auth/logout" class="logout-link">Sair</a>
+        </div>
+      </header>
+      <div id="media-container" aria-live="polite"></div>
+      <button id="start-share-btn" type="button" style="display:none">Iniciar compartilhamento</button>
+    </main>
+    <aside id="chat-panel">
+      <div id="chat-header"><h2>Atividade da sala</h2><span id="user-count">0 online</span></div>
+      <div id="chat-messages" aria-live="polite"></div>
       <form id="chat-form" autocomplete="off">
-        <input id="chat-input" placeholder="Digite uma mensagem…" maxlength="500">
+        <input id="chat-input" placeholder="Digite uma mensagem…" maxlength="500" aria-label="Mensagem">
         <button type="submit">Enviar</button>
       </form>
-    </div>
+    </aside>
   </div>
-
-  <!-- Modal de nome de usuário -->
-  <div id="name-modal">
-    <div id="name-modal-box">
-      <h2>Como quer ser chamado?</h2>
-      <p>Seu nome aparecerá no chat da sala.</p>
-      <form id="name-form" autocomplete="off">
-        <input id="name-input" placeholder="Seu apelido…" maxlength="20" required>
-        <button type="submit">Entrar</button>
-      </form>
-    </div>
+  <div id="error-overlay" role="alert" aria-live="assertive">
+    <div id="error-box"><h1>Sala indisponível</h1><p id="error-text">Esta sala não existe ou expirou.</p><a href="/">Voltar ao início</a></div>
   </div>
-
-  <div id="error-overlay">
-    <div id="error-box">
-      <h1>Sala Indisponível</h1>
-      <p id="error-text">Esta sala não existe ou expirou.</p>
-    </div>
-  </div>
-
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/js/room.js"></script>
 </body>

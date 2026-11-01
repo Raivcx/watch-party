@@ -1,7 +1,7 @@
 // Watch Party Room — Vanilla JS client
 // Media: VidSrc iframe (movie/serie), YouTube IFrame API, WebRTC screenshare
 
-const socket = io({ transports: ["websocket", "polling"] });
+const socket = io({ transports: ["websocket", "polling"], autoConnect: false });
 const roomId = window.location.pathname.split("/room/")[1]?.split("/")[0];
 
 if (!roomId) showError("No room ID in the URL.");
@@ -14,32 +14,27 @@ const mediaEl      = document.getElementById("media-container");
 const shareBtn     = document.getElementById("start-share-btn");
 const errorOverlay = document.getElementById("error-overlay");
 const errorText    = document.getElementById("error-text");
-const nameModal    = document.getElementById("name-modal");
-const nameInput    = document.getElementById("name-input");
-const nameForm     = document.getElementById("name-form");
 
 let myId        = null;
 let isHost      = false;
 let onlineCount = 0;
-let myName      = localStorage.getItem("watchPartyName") || "";
+let myName      = "Discord user";
 
-// ── Nome do usuário ───────────────────────────────────────────────────────────
-if (!myName) {
-  nameModal.style.display = "flex";
-  nameInput.focus();
-} else {
-  initSocket();
-}
-
-nameForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const val = nameInput.value.trim().slice(0, 20);
-  if (!val) return;
-  myName = val;
-  localStorage.setItem("watchPartyName", myName);
-  nameModal.style.display = "none";
-  initSocket();
-});
+fetch("/api/me", { credentials: "same-origin", cache: "no-store" })
+  .then((res) => {
+    if (!res.ok) throw new Error("AUTH_REQUIRED");
+    return res.json();
+  })
+  .then(({ user }) => {
+    myName = user.username;
+    const nameEl = document.getElementById("user-name");
+    if (nameEl) nameEl.textContent = user.username;
+    const avatarEl = document.getElementById("user-avatar");
+    if (avatarEl && user.avatar) { avatarEl.src = user.avatar; avatarEl.hidden = false; }
+    initSocket();
+    socket.connect();
+  })
+  .catch(() => window.location.replace("/auth/discord?returnTo=" + encodeURIComponent(window.location.pathname)));
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 let msgTimestamps = [];
