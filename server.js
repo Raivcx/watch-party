@@ -438,6 +438,38 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Transfer host — host can voluntarily transfer to another socket
+  socket.on('transfer-host', ({ targetSocketId }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room || room.hostSocketId !== socket.id) return;
+    if (targetSocketId === socket.id) return;
+
+    const targetSocket = io.sockets.sockets.get(targetSocketId);
+    if (!targetSocket || !targetSocket.data?.user) return;
+
+    const targetUser = targetSocket.data.user;
+    room.hostSocketId = targetSocketId;
+    room.hostUserId   = targetUser.id;
+    // creatorId stays the same — original creator can still reclaim
+
+    // Notify new host
+    targetSocket.emit('host-promoted', { message: 'Você recebeu o host da sala.' });
+    targetSocket.emit('transfer-host-ack', { message: 'Você é o novo host.' });
+
+    // Notify everyone else
+    socket.to(currentRoomId).emit('host-changed', {
+      newHostId:   targetSocketId,
+      newHostName: targetUser.username,
+      userCount:   room.userCount,
+    });
+
+    // Notify old host
+    socket.emit('transfer-host-ack', { message: 'Host transferido para ' + targetUser.username + '.' });
+
+    console.log('[room] host transferred ' + socket.id + ' → ' + targetSocketId + ' in ' + currentRoomId);
+  });
+
   // WebRTC signaling
   socket.on("rtc-offer",  ({ to, sdp })       => io.to(to).emit("rtc-offer",  { from: socket.id, sdp }));
   socket.on("rtc-answer", ({ to, sdp })       => io.to(to).emit("rtc-answer", { from: socket.id, sdp }));

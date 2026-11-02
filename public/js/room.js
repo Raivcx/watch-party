@@ -57,9 +57,50 @@ const MSG_LIMIT   = 5;
 const MSG_WINDOW  = 5000;
 
 // ── Socket (lazy init after auth) ────────────────────────────────────────────
+// ── Resize handle ─────────────────────────────────────────────────────────────
+(function initResize() {
+  const handle   = document.getElementById('resize-handle');
+  const mediaPnl = document.getElementById('media-panel');
+  const app      = document.getElementById('app');
+  if (!handle || !mediaPnl) return;
+  const saved = localStorage.getItem('wp_media_width');
+  if (saved) mediaPnl.style.flex = '0 0 ' + saved;
+  let dragging = false;
+  handle.addEventListener('mousedown', (e) => { dragging = true; handle.classList.add('dragging'); e.preventDefault(); });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const r = app.getBoundingClientRect();
+    const pct = ((e.clientX - r.left) / r.width * 100).toFixed(1);
+    mediaPnl.style.flex = '0 0 ' + Math.min(85, Math.max(25, pct)) + '%';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    localStorage.setItem('wp_media_width', mediaPnl.style.flex.replace('0 0 ', ''));
+  });
+})();
+
 let socket = null;
 
 function initApp() {
+  // Toggle members panel
+  const toggleBtn    = document.getElementById('toggle-members-btn');
+  const membersPanel = document.getElementById('members-panel');
+  if (toggleBtn && membersPanel) {
+    const savedHidden = localStorage.getItem('wp_members_hidden') === '1';
+    if (savedHidden) membersPanel.classList.add('hidden');
+    else toggleBtn.classList.add('active');
+    toggleBtn.addEventListener('click', () => {
+      const hidden = membersPanel.classList.toggle('hidden');
+      localStorage.setItem('wp_members_hidden', hidden ? '1' : '0');
+      toggleBtn.classList.toggle('active', !hidden);
+    });
+  }
+
+  // Send button
+  document.getElementById('send-btn')?.addEventListener('click', sendChat);
+
   socket = io({ transports: ["websocket", "polling"] });
 
   // Chat input: Enter sends
@@ -115,6 +156,7 @@ function initApp() {
     setRoomHeader(info.type, info.media);
     addSystem(`Sala pronta · ${isHost ? "Você é o host" : "Você é viewer"}`);
     setupMedia(info.type, info.media);
+    if (isHost) { const ha = document.getElementById('header-actions'); if (ha) ha.style.display = 'flex'; }
   });
 
   socket.on("room-error", (msg) => showError(msg));
@@ -123,6 +165,10 @@ function initApp() {
     errorText.textContent = "O host encerrou a sessão. Esta sala foi fechada.";
     errorOverlay.style.display = "flex";
     setTimeout(() => { window.location.href = "/"; }, 4000);
+  });
+
+  socket.on('transfer-host-ack', ({ message }) => {
+    addSystem('👑 ' + message);
   });
 
   socket.on("kicked", ({ message }) => {
@@ -281,6 +327,8 @@ function esc(s) {
 function renderMembers() {
   if (!membersList) return;
   membersList.innerHTML = "";
+  const countEl = document.getElementById("members-count");
+  if (countEl) countEl.textContent = roomMembers.size;
 
   for (const [socketId, m] of roomMembers) {
     const isSelf = socketId === myId;
@@ -300,24 +348,71 @@ function renderMembers() {
       </div>
     `;
 
-    // Kick button — only visible to host, hidden for self
-    if (isHost && !isSelf && m.discordId) {
-      const kickBtn = document.createElement("button");
-      kickBtn.className = "kick-btn";
-      kickBtn.title = `Remover ${m.name}`;
-      kickBtn.textContent = "✕";
-      kickBtn.addEventListener("click", (e) => {
+    if (isHost && !isSelf) {
+      const actions = document.createElement('div');
+      actions.className = 'member-actions';
+      if (m.discordId) {
+        const kickBtn = document.createElement('button');
+        kickBtn.className = 'member-action-btn kick';
+        kickBtn.title = 'Remover ' + m.name;
+        kickBtn.textContent = '✕';
+        kickBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm('Remover ' + m.name + ' da sala?')) socket.emit('kick-user', { discordId: m.discordId });
+        });
+        actions.appendChild(kickBtn);
+      }
+      const txBtn = document.createElement('button');
+      txBtn.className = 'member-action-btn transfer';
+      txBtn.title = 'Transferir host para ' + m.name;
+      txBtn.textContent = '👑';
+      txBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (confirm(`Remover ${m.name} da sala?`)) {
-          socket.emit("kick-user", { discordId: m.discordId });
-        }
+        if (confirm('Transferir host para ' + m.name + '?')) socket.emit('transfer-host', { targetSocketId: socketId });
       });
-      item.appendChild(kickBtn);
+      actions.appendChild(txBtn);
+      item.appendChild(actions);
     }
 
     membersList.appendChild(item);
   }
 }
+
+// ── Transfer host modal ──────────────────────────────────────────────────────
+function openTransferModal() {
+  const modal = document.getElementById('transfer-modal');
+  const list  = document.getElementById('transfer-list');
+  if (!modal || !list) return;
+  list.innerHTML = '';
+  let hasOptions = false;
+  for (const [socketId, m] of roomMembers) {
+    if (socketId === myId) continue;
+    hasOptions = true;
+    const opt = document.createElement('div');
+    opt.className = 'transfer-option';
+    const img = document.createElement('img');
+    img.src = m.avatar || '';
+    const info = document.createElement('div');
+    info.innerHTML = '<div class="t-name">' + (m.name || '').replace(/</g,'&lt;') + '</div><div class="t-role">Viewer</div>';
+    opt.appendChild(img);
+    opt.appendChild(info);
+    opt.addEventListener('click', () => {
+      if (confirm('Transferir host para ' + m.name + '?')) {
+        socket.emit('transfer-host', { targetSocketId: socketId });
+        modal.style.display = 'none';
+      }
+    });
+    list.appendChild(opt);
+  }
+  if (!hasOptions) {
+    list.innerHTML = '<p style="color:var(--dc-text-muted);text-align:center;padding:16px">Nenhum viewer na sala</p>';
+  }
+  modal.style.display = 'flex';
+}
+document.getElementById('transfer-cancel-btn')?.addEventListener('click', () => {
+  document.getElementById('transfer-modal').style.display = 'none';
+});
+document.getElementById('transfer-host-btn')?.addEventListener('click', openTransferModal);
 
 function updateCountDisplay() {
   if (userCountEl) userCountEl.textContent = `${onlineCount} online`;
@@ -588,8 +683,17 @@ function setupScreenshare() {
   if (rtcSetup) return; rtcSetup = true;
   document.title = "🖥️ Screen Share — Watch Party";
   setupRTCSignaling();
-  shareBtn.style.display = "block";
-  shareBtn.addEventListener("click", startShare);
+  const pc     = document.getElementById('player-controls');
+  const btnSh  = document.getElementById('btn-share-screen');
+  const btnSt  = document.getElementById('btn-stop-share');
+  const btnFs  = document.getElementById('btn-fullscreen');
+  if (pc) pc.style.display = 'flex';
+  if (btnSh) btnSh.addEventListener('click', startShare);
+  if (btnSt) btnSt.addEventListener('click', () => { if (localStream) localStream.getTracks().forEach(t => t.stop()); });
+  if (btnFs) btnFs.addEventListener('click', () => {
+    const v = document.getElementById('screen-video') || document.getElementById('media-container');
+    if (v?.requestFullscreen) v.requestFullscreen();
+  });
 }
 
 function setupRTCViewer() {
@@ -633,13 +737,19 @@ async function startShare() {
     video.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
     video.srcObject = localStream;
     mediaEl.appendChild(video);
-    shareBtn.style.display = "none";
+    const _bsh = document.getElementById('btn-share-screen');
+    const _bst = document.getElementById('btn-stop-share');
+    if (_bsh) _bsh.style.display = 'none';
+    if (_bst) _bst.style.display = 'flex';
     addSystem("Compartilhando sua tela.");
     socket.emit("stream-started");
     localStream.getVideoTracks()[0].onended = () => {
       video.remove(); localStream = null; _sharingInProgress = false;
       closeAllPeers();
-      shareBtn.style.display = "block";
+      const _bsh2 = document.getElementById('btn-share-screen');
+      const _bst2 = document.getElementById('btn-stop-share');
+      if (_bsh2) _bsh2.style.display = 'flex';
+      if (_bst2) _bst2.style.display = 'none';
       addSystem("Compartilhamento encerrado.");
     };
   } catch (err) {
