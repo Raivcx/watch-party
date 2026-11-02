@@ -203,3 +203,40 @@ body{font-family:"gg sans","Noto Sans","Helvetica Neue",Helvetica,Arial,sans-ser
 @keyframes syncPulse{0%,100%{box-shadow:0 0 0 0 rgba(240,177,50,.6)}50%{box-shadow:0 0 0 6px rgba(240,177,50,0)}}
 .sync-pulse{animation:syncPulse 1.2s ease infinite}
 #start-share-btn{display:none!important}
+
+/* ── Fixes: coesao visual ─────────────────────────────────────────────────── */
+
+/* Player controls — not shown until JS sets display:flex */
+#player-controls { display: none; }
+
+/* Header actions — hidden until JS sets display:flex for host */
+.header-actions { display: none; }
+
+/* Members panel info area — ensure flex-shrink:0 on info */
+#members-panel .member-info { flex-shrink: 1; }
+
+/* Chat messages: first msg no top margin */
+#chat-messages > .msg:first-child { margin-top: 0; }
+
+/* System msg padding fix */
+.msg.system { padding-left: 0; padding-right: 0; }
+
+/* Input border left accent line */
+#chat-panel { border-left: none; }
+#right-column { border-left: 1px solid var(--dc-border); }
+
+/* Room badge spacing */
+.room-badge { margin-left: 4px; }
+
+/* Members header align */
+#members-header { height: 44px; }
+
+/* Collapsed member avatar size bump */
+#members-panel.collapsed .member-avatar { width: 32px; height: 32px; }
+
+/* Ctrl status better font */
+.ctrl-status { font-size: 12px; letter-spacing: .01em; }
+
+/* Resize handle hit target wider */
+#resize-handle { width: 5px; }
+#members-resize-handle { width: 5px; }
