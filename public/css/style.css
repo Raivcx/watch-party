@@ -240,3 +240,9 @@ body{font-family:"gg sans","Noto Sans","Helvetica Neue",Helvetica,Arial,sans-ser
 /* Resize handle hit target wider */
 #resize-handle { width: 5px; }
 #members-resize-handle { width: 5px; }
+
+/* Stream permission button */
+.member-action-btn.perm { color: var(--dc-text-muted); }
+.member-action-btn.perm:hover { background: rgba(88,101,242,.15); color: var(--dc-accent); }
+.member-action-btn.perm-active { color: var(--dc-accent); opacity: 1; }
+.member-action-btn.perm-active:hover { background: rgba(237,66,69,.15); color: var(--dc-danger); }

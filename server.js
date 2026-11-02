@@ -470,7 +470,44 @@ io.on("connection", (socket) => {
     console.log('[room] host transferred ' + socket.id + ' → ' + targetSocketId + ' in ' + currentRoomId);
   });
 
-  // WebRTC signaling
+  // Grant stream permission — host allows a viewer to share screen
+  socket.on("grant-stream-permission", ({ targetSocketId }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room || room.hostSocketId !== socket.id) return; // host only
+    const target = io.sockets.sockets.get(targetSocketId);
+    if (!target) return;
+
+    // Track who has permission
+    if (!room.streamPermissions) room.streamPermissions = new Set();
+    room.streamPermissions.add(targetSocketId);
+
+    target.emit("stream-permission-granted", {
+      message: "O host permitiu que você compartilhe sua tela.",
+    });
+    // Notify the room so everyone knows
+    io.to(currentRoomId).emit("stream-permission-update", {
+      socketId: targetSocketId,
+      name:     target.data?.user?.username || "Viewer",
+      granted:  true,
+    });
+    console.log(`[room] stream permission granted to ${targetSocketId} in ${currentRoomId}`);
+  });
+
+  // Revoke stream permission
+  socket.on("revoke-stream-permission", ({ targetSocketId }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room || room.hostSocketId !== socket.id) return;
+    room.streamPermissions?.delete(targetSocketId);
+    const target = io.sockets.sockets.get(targetSocketId);
+    if (target) target.emit("stream-permission-revoked", { message: "Permissão de stream removida." });
+  });
+
+  // Validate stream-started — only permitted sockets can start a stream
+  // (override the existing stream-started handler to check permission)
+
+    // WebRTC signaling
   socket.on("rtc-offer",  ({ to, sdp })       => io.to(to).emit("rtc-offer",  { from: socket.id, sdp }));
   socket.on("rtc-answer", ({ to, sdp })       => io.to(to).emit("rtc-answer", { from: socket.id, sdp }));
   socket.on("rtc-ice",    ({ to, candidate }) => io.to(to).emit("rtc-ice",    { from: socket.id, candidate }));

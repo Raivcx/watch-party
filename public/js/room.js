@@ -218,6 +218,40 @@ function initApp() {
     setTimeout(() => { window.location.href = "/"; }, 4000);
   });
 
+  socket.on('stream-permission-granted', ({ message }) => {
+    addSystem('🎥 ' + message);
+    const pc = document.getElementById('player-controls');
+    const sg = document.getElementById('ctrl-share-group');
+    const wt = document.getElementById('ctrl-viewer-waiting');
+    if (pc) pc.style.display = 'flex';
+    if (sg) sg.style.display = 'flex';
+    if (wt) wt.style.display = 'none';
+    const btnSh = document.getElementById('btn-share-screen');
+    if (btnSh && !btnSh.dataset.wired) {
+      btnSh.dataset.wired = '1';
+      btnSh.addEventListener('click', startShare);
+    }
+    const btnSt = document.getElementById('btn-stop-share');
+    if (btnSt && !btnSt.dataset.wired) {
+      btnSt.dataset.wired = '1';
+      btnSt.addEventListener('click', () => { if (localStream) localStream.getTracks().forEach(t => t.stop()); });
+    }
+    if (!rtcSetup) { rtcSetup = true; setupRTCSignaling(); }
+  });
+
+  socket.on('stream-permission-revoked', ({ message }) => {
+    addSystem('⛔ ' + message);
+    const sg = document.getElementById('ctrl-share-group');
+    if (sg) sg.style.display = 'none';
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+  });
+
+  socket.on('stream-permission-update', ({ socketId: sid, name, granted }) => {
+    if (granted) { streamPermissions.add(sid); addSystem('🎥 ' + name + ' pode compartilhar tela.'); }
+    else streamPermissions.delete(sid);
+    renderMembers();
+  });
+
   socket.on('transfer-host-ack', ({ message }) => {
     addSystem('👑 ' + message);
   });
@@ -424,6 +458,26 @@ function renderMembers() {
         if (confirm('Transferir host para ' + m.name + '?')) socket.emit('transfer-host', { targetSocketId: socketId });
       });
       actions.appendChild(txBtn);
+
+      // Stream permission button (host grants viewer ability to share screen)
+      const hasPermission = streamPermissions.has(socketId);
+      const permBtn = document.createElement('button');
+      permBtn.className = 'member-action-btn perm' + (hasPermission ? ' perm-active' : '');
+      permBtn.title = hasPermission ? 'Revogar permissão de stream' : 'Permitir compartilhar tela';
+      permBtn.textContent = hasPermission ? '📡' : '🎥';
+      permBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (hasPermission) {
+          socket.emit('revoke-stream-permission', { targetSocketId: socketId });
+          streamPermissions.delete(socketId);
+        } else {
+          socket.emit('grant-stream-permission', { targetSocketId: socketId });
+          streamPermissions.add(socketId);
+        }
+        renderMembers();
+      });
+      actions.appendChild(permBtn);
+
       item.appendChild(actions);
     }
 
@@ -806,6 +860,9 @@ function updateStreamLayout() {
   }
 }
 
+
+// Set of socketIds that the host has granted stream permission to
+const streamPermissions = new Set();
 let localStream = null;
 const peers     = {};
 let rtcSetup    = false;
