@@ -304,12 +304,11 @@ io.on("connection", (socket) => {
       room._hostGraceTimer = null;
     }
 
-    const isHost = room.creatorId === user.id || !room.hostSocketId;
+    // Only the original creator is host. If creator's socket dropped and nobody
+    // took over yet, leave hostSocketId null — do NOT promote random viewers.
+    const isHost = room.creatorId === user.id;
 
     if (isHost) {
-      room.hostSocketId = socket.id;
-      room.hostUserId   = user.id;
-    } else if (!room.hostSocketId) {
       room.hostSocketId = socket.id;
       room.hostUserId   = user.id;
     }
@@ -545,7 +544,12 @@ io.on("connection", (socket) => {
 
           if (room.type === "screenshare") {
             const activeSockets = io.sockets.adapter.rooms.get(currentRoomId);
-            const nextHostId    = activeSockets ? [...activeSockets][0] : null;
+            // Prefer the creator if they are still in the room
+          const allSockets = activeSockets ? [...activeSockets] : [];
+          const nextHostId = allSockets.find(sid => {
+            const sock = io.sockets.sockets.get(sid);
+            return sock && sock.data?.user?.id === room.creatorId;
+          }) || allSockets[0] || null;
             if (nextHostId) {
               const nextSocket = io.sockets.sockets.get(nextHostId);
               const nextUser   = nextSocket?.data?.user;
