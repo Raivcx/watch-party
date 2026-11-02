@@ -81,6 +81,57 @@ const MSG_WINDOW  = 5000;
   });
 })();
 
+// ── Members panel resize + collapse ──────────────────────────────────────────
+(function initMembersPanel() {
+  const panel      = document.getElementById('members-panel');
+  const handle     = document.getElementById('members-resize-handle');
+  const collapseBtn= document.getElementById('members-collapse-btn');
+  const app        = document.getElementById('app');
+  if (!panel) return;
+
+  // Restore saved state
+  const savedWidth     = localStorage.getItem('wp_members_width');
+  const savedCollapsed = localStorage.getItem('wp_members_collapsed') === '1';
+
+  if (savedCollapsed) {
+    panel.classList.add('collapsed');
+    collapseBtn.textContent = '›';
+  } else if (savedWidth) {
+    panel.style.width = savedWidth;
+  }
+
+  // Collapse toggle
+  collapseBtn?.addEventListener('click', () => {
+    const isCollapsed = panel.classList.toggle('collapsed');
+    collapseBtn.textContent = isCollapsed ? '›' : '‹';
+    localStorage.setItem('wp_members_collapsed', isCollapsed ? '1' : '0');
+    if (!isCollapsed && savedWidth) panel.style.width = savedWidth;
+  });
+
+  // Resize drag
+  if (!handle) return;
+  let dragging = false;
+  handle.addEventListener('mousedown', (e) => {
+    if (panel.classList.contains('collapsed')) return;
+    dragging = true;
+    handle.classList.add('dragging');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const r    = panel.getBoundingClientRect();
+    const newW = Math.min(400, Math.max(56, r.right - e.clientX));
+    panel.style.width = newW + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    localStorage.setItem('wp_members_width', panel.style.width);
+  });
+})();
+
+
 let socket = null;
 
 function initApp() {
@@ -223,6 +274,7 @@ function initApp() {
     roomMembers.delete(socketId);
     renderMembers();
     if (peers[socketId]) { peers[socketId].close(); delete peers[socketId]; }
+    removeStreamVideo(socketId);
   });
 
   socket.on("viewer-joined-notify", ({ name: viewerName }) => {
@@ -336,6 +388,7 @@ function renderMembers() {
     item.className = "member-item";
     item.dataset.socketId  = socketId;
     item.dataset.discordId = m.discordId || "";
+    item.dataset.tip       = m.name || "";
 
     item.innerHTML = `
       <div class="member-avatar-wrap">
@@ -669,6 +722,89 @@ function setupYouTube(videoId) {
 }
 
 // ── WebRTC ────────────────────────────────────────────────────────────────────
+
+// ── Multi-stream support ──────────────────────────────────────────────────────
+// Map<socketId, { stream, videoEl, peerId }> — active incoming streams
+const activeStreams = new Map();
+
+function addStreamVideo(fromId, stream) {
+  // Remove existing video for this peer if any
+  removeStreamVideo(fromId);
+
+  const wrapper = document.createElement('div');
+  wrapper.id = 'stream-' + fromId;
+  wrapper.style.cssText = 'position:relative;flex:1;min-width:240px;min-height:135px;background:#000;border-radius:4px;overflow:hidden;';
+
+  const v = document.createElement('video');
+  v.autoplay = true; v.playsInline = true; v.muted = false;
+  v.style.cssText = 'width:100%;height:100%;object-fit:contain;';
+  v.srcObject = stream;
+
+  // Label overlay
+  const label = document.createElement('div');
+  label.style.cssText = 'position:absolute;bottom:4px;left:6px;font-size:11px;color:#fff;background:rgba(0,0,0,0.55);padding:2px 6px;border-radius:3px;';
+  // Try to get username from roomMembers
+  const member = [...roomMembers.values()].find(m => m.socketId === fromId || fromId === myId);
+  label.textContent = member ? member.name : fromId.slice(0,6);
+
+  wrapper.appendChild(v);
+  wrapper.appendChild(label);
+
+  // Click to focus (expand this stream)
+  wrapper.addEventListener('click', () => focusStream(fromId));
+
+  activeStreams.set(fromId, { stream, videoEl: v, wrapper });
+
+  // Add to grid
+  const grid = document.getElementById('stream-grid');
+  if (grid) grid.appendChild(wrapper);
+  else mediaEl.appendChild(wrapper);
+
+  v.play().catch(() => {});
+  updateStreamLayout();
+}
+
+function removeStreamVideo(fromId) {
+  const s = activeStreams.get(fromId);
+  if (s) { s.wrapper?.remove(); activeStreams.delete(fromId); }
+  updateStreamLayout();
+}
+
+function focusStream(fromId) {
+  // Toggle focused class — focused stream takes full width
+  const s = activeStreams.get(fromId);
+  if (!s) return;
+  const isFocused = s.wrapper.classList.contains('focused');
+  activeStreams.forEach(st => st.wrapper.classList.remove('focused'));
+  if (!isFocused) s.wrapper.classList.add('focused');
+  updateStreamLayout();
+}
+
+function updateStreamLayout() {
+  const grid = document.getElementById('stream-grid');
+  if (!grid) return;
+  const count = activeStreams.size;
+  if (count === 0) {
+    grid.style.display = 'none';
+    return;
+  }
+  grid.style.display = 'flex';
+  grid.style.flexWrap = 'wrap';
+  grid.style.gap = '4px';
+  grid.style.width = '100%';
+  grid.style.height = '100%';
+  // If one is focused, give it 70% width
+  const focused = [...activeStreams.values()].find(s => s.wrapper.classList.contains('focused'));
+  if (focused && count > 1) {
+    focused.wrapper.style.flex = '0 0 calc(70% - 2px)';
+    activeStreams.forEach((s) => {
+      if (!s.wrapper.classList.contains('focused')) s.wrapper.style.flex = '1 1 calc(30% - 2px)';
+    });
+  } else {
+    activeStreams.forEach(s => { s.wrapper.style.flex = '1 1 calc(50% - 2px)'; });
+  }
+}
+
 let localStream = null;
 const peers     = {};
 let rtcSetup    = false;
@@ -682,6 +818,7 @@ const ICE = { iceServers: [
 function setupScreenshare() {
   if (rtcSetup) return; rtcSetup = true;
   document.title = "🖥️ Screen Share — Watch Party";
+  ensureStreamGrid();
   setupRTCSignaling();
   const pc     = document.getElementById('player-controls');
   const btnSh  = document.getElementById('btn-share-screen');
@@ -699,11 +836,20 @@ function setupScreenshare() {
 function setupRTCViewer() {
   if (rtcSetup) return; rtcSetup = true;
   document.title = "🖥️ Screen Share — Watch Party";
+  ensureStreamGrid();
   setupRTCSignaling();
   addSystem("Aguardando stream do host…");
   setTimeout(() => socket.emit("rtc-request-stream"), 800);
 }
 
+
+function ensureStreamGrid() {
+  if (document.getElementById('stream-grid')) return;
+  const grid = document.createElement('div');
+  grid.id = 'stream-grid';
+  grid.style.cssText = 'display:none;width:100%;height:100%;padding:4px;box-sizing:border-box;background:#111;';
+  mediaEl.appendChild(grid);
+}
 function setupRTCSignaling() {
   socket.on("rtc-request-stream", ({ from }) => { if (localStream) sendOffer(from); });
   socket.on("rtc-offer", async ({ from, sdp }) => {
@@ -775,24 +921,8 @@ function newPC(peerId, isHostPeer) {
     if (candidate) socket.emit("rtc-ice", { to: peerId, candidate });
   };
   pc.ontrack = ({ streams }) => {
-    let v = document.getElementById("screen-video");
-    if (v) { v.srcObject = streams[0]; return; }
-    v = document.createElement("video");
-    v.id = "screen-video"; v.autoplay = true; v.playsInline = true; v.muted = false;
-    v.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
-    v.srcObject = streams[0];
-    mediaEl.appendChild(v);
-    shareBtn.style.display = "none";
-    const tryPlay = () => v.play().catch(() => {
-      const ov = document.createElement("div");
-      ov.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.7);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;z-index:10;";
-      ov.innerHTML = `<div style="font-size:64px">▶</div><div style="color:#fff;margin-top:12px">Clique para ver a tela</div>`;
-      ov.addEventListener("click", () => { v.play(); ov.remove(); });
-      mediaEl.style.position = "relative"; mediaEl.appendChild(ov);
-    });
-    tryPlay();
-    v.addEventListener("canplay", tryPlay, { once: true });
-    addSystem("Recebendo tela do host.");
+    addStreamVideo(peerId, streams[0]);
+    addSystem("📺 Recebendo tela de " + (([...roomMembers.values()].find(m => m.socketId === peerId) || {}).name || peerId.slice(0,6)) + ".");
   };
   return pc;
 }
@@ -800,11 +930,11 @@ function newPC(peerId, isHostPeer) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function cleanupScreenVideo() {
+  // Clear old single-video element (legacy)
   const v = document.getElementById("screen-video");
-  if (v) {
-    if (v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
-    v.remove();
-  }
+  if (v) { if (v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; } v.remove(); }
+  // Clear multi-stream grid
+  activeStreams.forEach((s, id) => removeStreamVideo(id));
 }
 
 function closeAllPeers() {

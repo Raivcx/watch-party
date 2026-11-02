@@ -388,13 +388,54 @@ body {
 #members-panel {
   flex-shrink: 0;
   width: 200px;
+  min-width: 48px;
   background: var(--dc-sidebar-dark);
   border-left: 1px solid var(--dc-border);
   overflow-y: auto;
   padding: 16px 0;
-  transition: width 0.2s, opacity 0.2s;
+  transition: width 0.2s;
+  position: relative;
 }
-#members-panel.hidden { width: 0; opacity: 0; overflow: hidden; padding: 0; }
+#members-panel.hidden { width: 0; min-width: 0; overflow: hidden; padding: 0; border: none; }
+#members-panel.collapsed { width: 56px; min-width: 56px; }
+#members-panel.collapsed .members-group-label { display: none; }
+#members-panel.collapsed .member-name,
+#members-panel.collapsed .member-role,
+#members-panel.collapsed .member-actions { display: none; }
+#members-panel.collapsed .member-item { padding: 6px 8px; justify-content: center; margin: 0 4px; }
+#members-panel.collapsed .member-avatar-wrap { margin: 0 auto; }
+#members-panel.collapsed .member-avatar { width: 36px; height: 36px; }
+#members-panel.collapsed #members-resize-handle { display: none; }
+
+/* Members resize handle (vertical) */
+#members-resize-handle {
+  position: absolute;
+  top: 0; left: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+  z-index: 5;
+}
+#members-resize-handle:hover,
+#members-resize-handle.dragging { background: var(--dc-accent); }
+
+/* Members collapse toggle button */
+#members-collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 6px 0 10px;
+  background: transparent;
+  border: none;
+  color: var(--dc-text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  transition: color 0.15s;
+}
+#members-collapse-btn:hover { color: var(--dc-text); }
 #members-panel::-webkit-scrollbar { width: 4px; }
 #members-panel::-webkit-scrollbar-thumb { background: var(--dc-border); border-radius: 2px; }
 
@@ -586,3 +627,21 @@ body {
   50%       { box-shadow: 0 0 0 6px rgba(240,177,50,0); }
 }
 .sync-pulse { animation: syncPulse 1.2s ease infinite; }
+
+/* Tooltip on member avatar (collapsed mode) */
+.member-item[data-tip] { position: relative; }
+.member-item[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: #111;
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100;
+}
