@@ -269,12 +269,31 @@ function initApp() {
   socket.on("host-promoted", ({ message }) => {
     isHost = true;
     addSystem(`👑 ${message}`);
-    cleanupScreenVideo();
+    // DO NOT cleanupScreenVideo — other streams may still be active
     if (!rtcSetup) { rtcSetup = true; setupRTCSignaling(); }
-    shareBtn.removeEventListener("click", startShare);
-    shareBtn.addEventListener("click", startShare);
-    shareBtn.style.display = "block";
-    // Update member entry to show host badge
+    // Show share controls for new host
+    const _pc = document.getElementById("player-controls");
+    const _sg = document.getElementById("ctrl-share-group");
+    const _wt = document.getElementById("ctrl-viewer-waiting");
+    const _rv = document.getElementById("ctrl-viewer-receiving");
+    if (_pc) _pc.style.display = "flex";
+    if (_sg) _sg.style.display = "flex";
+    if (_wt) _wt.style.display = "none";
+    if (_rv) _rv.style.display = "none";
+    const shareBtn2 = document.getElementById("btn-share-screen");
+    const stopBtn2  = document.getElementById("btn-stop-share");
+    if (shareBtn2 && !shareBtn2.dataset.wired) {
+      shareBtn2.dataset.wired = "1";
+      shareBtn2.addEventListener("click", startShare);
+    }
+    if (stopBtn2 && !stopBtn2.dataset.wired) {
+      stopBtn2.dataset.wired = "1";
+      stopBtn2.addEventListener("click", () => {
+        if (localStream) { localStream.getTracks().forEach(t => t.stop()); _sharingInProgress = false; }
+      });
+    }
+    const ha = document.getElementById("header-actions");
+    if (ha) ha.style.display = "flex";
     renderMembers();
   });
 
@@ -288,9 +307,16 @@ function initApp() {
   });
 
   socket.on("stream-started", () => {
-    if (isHost) return;
     cleanupScreenVideo();
-    addSystem("🟢 Nova transmissão disponível, conectando…");
+    if (!isHost) {
+      // update viewer waiting/receiving indicators
+      const _w2 = document.getElementById("ctrl-viewer-waiting");
+      const _r2 = document.getElementById("ctrl-viewer-receiving");
+      if (_w2) _w2.style.display = "flex";
+      if (_r2) _r2.style.display = "none";
+      addSystem("🟢 Nova transmissão disponível, conectando…");
+    }
+    // EVERYONE including host requests the stream
     setTimeout(() => socket.emit("rtc-request-stream"), 600);
   });
 
@@ -799,7 +825,9 @@ function addStreamVideo(fromId, stream) {
   wrapper.className = "stream-tile";
 
   const v = document.createElement("video");
-  v.autoplay = true; v.playsInline = true; v.muted = false;
+  v.autoplay = true; v.playsInline = true;
+  // Start muted so autoplay is guaranteed; user can click tile to unmute
+  v.muted = true;
   v.srcObject = stream;
 
   const label = document.createElement("div");
@@ -815,7 +843,22 @@ function addStreamVideo(fromId, stream) {
   wrapper.appendChild(label);
   wrapper.appendChild(badge);
 
-  wrapper.addEventListener("click", () => focusStream(fromId));
+  wrapper.addEventListener("click", () => {
+    focusStream(fromId);
+    // Toggle mute on click
+    if (v.muted) {
+      v.muted = false;
+      // Show brief "🔊" indicator
+      const s2 = activeStreams.get(fromId);
+      if (s2) {
+        const ind = document.createElement("div");
+        ind.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:32px;pointer-events:none;opacity:1;transition:opacity .6s;";
+        ind.textContent = "🔊";
+        wrapper.appendChild(ind);
+        setTimeout(() => { ind.style.opacity = "0"; setTimeout(() => ind.remove(), 600); }, 800);
+      }
+    }
+  });
 
   activeStreams.set(fromId, { stream, videoEl: v, wrapper });
 
@@ -829,11 +872,8 @@ function addStreamVideo(fromId, stream) {
     mediaEl.appendChild(wrapper);
   }
 
-  // Play with autoplay muted fallback
-  v.play().catch(() => {
-    v.muted = true;
-    v.play().catch(e => console.warn("[stream] play failed:", e));
-  });
+  // Always muted at start — autoplay guaranteed; click tile to unmute
+  v.play().catch(e => console.warn("[stream] play failed:", e));
   updateStreamLayout();
 }
 
@@ -1018,8 +1058,11 @@ function newPC(peerId, isHostPeer) {
     if (candidate) socket.emit("rtc-ice", { to: peerId, candidate });
   };
   pc.ontrack = ({ streams }) => {
-    addStreamVideo(peerId, streams[0]);
-    addSystem("📺 Recebendo tela de " + (([...roomMembers.values()].find(m => m.socketId === peerId) || {}).name || peerId.slice(0,6)) + ".");
+    if (!streams || !streams[0]) return; // guard: stream not ready yet
+    const stream = streams[0];
+    const memberName = ([...roomMembers.entries()].find(([sid]) => sid === peerId) || [])[1]?.name || peerId.slice(0,6);
+    addStreamVideo(peerId, stream);
+    addSystem("📺 Recebendo tela de " + memberName + ".");
     const _wt = document.getElementById("ctrl-viewer-waiting");
     const _rv = document.getElementById("ctrl-viewer-receiving");
     if (_wt) _wt.style.display = "none";
