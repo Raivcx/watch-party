@@ -468,7 +468,7 @@ document.getElementById('transfer-cancel-btn')?.addEventListener('click', () => 
 document.getElementById('transfer-host-btn')?.addEventListener('click', openTransferModal);
 
 function updateCountDisplay() {
-  if (userCountEl) userCountEl.textContent = `${onlineCount} online`;
+  if (userCountEl) userCountEl.textContent = onlineCount;
 }
 
 function updateTypingIndicator(typingUsers, el) {
@@ -731,27 +731,28 @@ function addStreamVideo(fromId, stream) {
   // Remove existing video for this peer if any
   removeStreamVideo(fromId);
 
-  const wrapper = document.createElement('div');
-  wrapper.id = 'stream-' + fromId;
-  wrapper.style.cssText = 'position:relative;flex:1;min-width:240px;min-height:135px;background:#000;border-radius:4px;overflow:hidden;';
+  const wrapper = document.createElement("div");
+  wrapper.id = "stream-" + fromId;
+  wrapper.className = "stream-tile";
 
-  const v = document.createElement('video');
+  const v = document.createElement("video");
   v.autoplay = true; v.playsInline = true; v.muted = false;
-  v.style.cssText = 'width:100%;height:100%;object-fit:contain;';
   v.srcObject = stream;
 
-  // Label overlay
-  const label = document.createElement('div');
-  label.style.cssText = 'position:absolute;bottom:4px;left:6px;font-size:11px;color:#fff;background:rgba(0,0,0,0.55);padding:2px 6px;border-radius:3px;';
-  // Try to get username from roomMembers
+  const label = document.createElement("div");
+  label.className = "stream-label";
   const member = [...roomMembers.values()].find(m => m.socketId === fromId || fromId === myId);
-  label.textContent = member ? member.name : fromId.slice(0,6);
+  label.textContent = member ? member.name : fromId.slice(0, 6);
+
+  const badge = document.createElement("div");
+  badge.className = "stream-live-badge";
+  badge.textContent = "AO VIVO";
 
   wrapper.appendChild(v);
   wrapper.appendChild(label);
+  wrapper.appendChild(badge);
 
-  // Click to focus (expand this stream)
-  wrapper.addEventListener('click', () => focusStream(fromId));
+  wrapper.addEventListener("click", () => focusStream(fromId));
 
   activeStreams.set(fromId, { stream, videoEl: v, wrapper });
 
@@ -838,6 +839,10 @@ function setupRTCViewer() {
   document.title = "🖥️ Screen Share — Watch Party";
   ensureStreamGrid();
   setupRTCSignaling();
+  const pc = document.getElementById("player-controls");
+  const waiting = document.getElementById("ctrl-viewer-waiting");
+  if (pc) pc.style.display = "flex";
+  if (waiting) waiting.style.display = "flex";
   addSystem("Aguardando stream do host…");
   setTimeout(() => socket.emit("rtc-request-stream"), 800);
 }
@@ -923,6 +928,10 @@ function newPC(peerId, isHostPeer) {
   pc.ontrack = ({ streams }) => {
     addStreamVideo(peerId, streams[0]);
     addSystem("📺 Recebendo tela de " + (([...roomMembers.values()].find(m => m.socketId === peerId) || {}).name || peerId.slice(0,6)) + ".");
+    const _wt = document.getElementById("ctrl-viewer-waiting");
+    const _rv = document.getElementById("ctrl-viewer-receiving");
+    if (_wt) _wt.style.display = "none";
+    if (_rv) _rv.style.display = "flex";
   };
   return pc;
 }
