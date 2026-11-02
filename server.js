@@ -294,13 +294,24 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     room.userCount++;
 
-    // Host: creator by Discord ID, or first joiner if no creator set
-    const isHost = (room.hostUserId && room.hostUserId === user.id) ||
-                   (!room.hostUserId && !room.hostSocketId);
+    // creatorId is set once and never changes (unlike hostUserId which changes on transfers).
+    // The creator always reclaims host on reconnect.
+    if (!room.creatorId) room.creatorId = room.hostUserId || user.id;
 
-    if (isHost || !room.hostSocketId) {
+    // Cancel grace period timer if creator reconnects in time
+    if (room._hostGraceTimer && room.creatorId === user.id) {
+      clearTimeout(room._hostGraceTimer);
+      room._hostGraceTimer = null;
+    }
+
+    const isHost = room.creatorId === user.id || !room.hostSocketId;
+
+    if (isHost) {
       room.hostSocketId = socket.id;
-      if (!room.hostUserId) room.hostUserId = user.id;
+      room.hostUserId   = user.id;
+    } else if (!room.hostSocketId) {
+      room.hostSocketId = socket.id;
+      room.hostUserId   = user.id;
     }
 
     // Track member
@@ -453,32 +464,36 @@ io.on("connection", (socket) => {
     const userCount = room.userCount;
 
     if (room.hostSocketId === socket.id) {
-      if (room.type === "screenshare" && room.userCount > 0) {
-        const sockets   = io.sockets.adapter.rooms.get(currentRoomId);
-        const nextHostId = sockets ? [...sockets].find(sid => sid !== socket.id) : null;
+      // Clear active host socket so creator can reclaim on reconnect
+      room.hostSocketId = null;
 
-        if (nextHostId) {
-          const nextSocket = io.sockets.sockets.get(nextHostId);
-          const nextUser   = nextSocket?.data?.user;
-          room.hostSocketId = nextHostId;
-          room.hostUserId   = nextUser?.id || room.hostUserId;
+      if (room.userCount > 0) {
+        // Grace period: 12s window for the creator to reconnect and reclaim host.
+        // If they do, join-room clears this timer and restores host silently.
+        room._hostGraceTimer = setTimeout(() => {
+          const r = getRoom(currentRoomId);
+          if (!r || r.hostSocketId) return; // already reclaimed or destroyed
 
-          // Update member isHost flag
-          if (nextUser) {
-            const m = room.members.get(nextUser.id);
-            if (m) m.isHost = true;
+          if (room.type === "screenshare") {
+            const activeSockets = io.sockets.adapter.rooms.get(currentRoomId);
+            const nextHostId    = activeSockets ? [...activeSockets][0] : null;
+            if (nextHostId) {
+              const nextSocket = io.sockets.sockets.get(nextHostId);
+              const nextUser   = nextSocket?.data?.user;
+              r.hostSocketId = nextHostId;
+              r.hostUserId   = nextUser?.id || r.hostUserId;
+              if (nextUser) { const m = r.members.get(nextUser.id); if (m) m.isHost = true; }
+              io.to(nextHostId).emit("host-promoted", { message: "Você é o novo host da sala." });
+              socket.to(currentRoomId).emit("host-changed", { newHostId: nextHostId, newHostName: nextUser?.username || null, userCount: r.userCount });
+            } else {
+              io.to(currentRoomId).emit("host-left");
+              deleteRoom(currentRoomId);
+            }
+          } else {
+            io.to(currentRoomId).emit("host-left");
+            deleteRoom(currentRoomId);
           }
-
-          io.to(nextHostId).emit("host-promoted", { message: "Você é o novo host da sala." });
-          socket.to(currentRoomId).emit("host-changed", {
-            newHostId:   nextHostId,
-            newHostName: nextUser?.username || null,
-            userCount,
-          });
-        } else {
-          io.to(currentRoomId).emit("host-left");
-          deleteRoom(currentRoomId);
-        }
+        }, 12000);
       } else {
         io.to(currentRoomId).emit("host-left");
         deleteRoom(currentRoomId);
@@ -499,6 +514,7 @@ httpServer.listen(PORT, () => {
 });
 
 import "./bot/index.js";
+
 
 
 
