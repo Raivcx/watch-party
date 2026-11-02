@@ -294,8 +294,8 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     room.userCount++;
 
-    // creatorId is set once and never changes (unlike hostUserId which changes on transfers).
-    // The creator always reclaims host on reconnect.
+    // creatorId set at room creation (roomStore.js) — immutable.
+    // Fallback: if room was created before this field existed, init now.
     if (!room.creatorId) room.creatorId = room.hostUserId || user.id;
 
     // Cancel grace period timer if creator reconnects in time
@@ -307,6 +307,7 @@ io.on("connection", (socket) => {
     // Only the original creator is host. If creator's socket dropped and nobody
     // took over yet, leave hostSocketId null — do NOT promote random viewers.
     const isHost = room.creatorId === user.id;
+    console.log(`[join-room] user=${user.username}(${user.id}) creatorId=${room.creatorId} isHost=${isHost}`);
 
     if (isHost) {
       room.hostSocketId = socket.id;

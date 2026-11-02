@@ -156,6 +156,9 @@ body {
   position: relative;
   overflow: hidden;
   background: #000;
+  /* flex so iframe/video fill it */
+  display: flex;
+  flex-direction: column;
 }
 #media-container iframe,
 #media-container video {
@@ -163,8 +166,16 @@ body {
   height: 100%;
   border: none;
   display: block;
+  flex: 1;
 }
 #screen-video { object-fit: contain; background: #000; }
+
+/* Stream grid — absolute so it doesn't push player-controls out */
+#stream-grid {
+  position: absolute !important;
+  inset: 0;
+  z-index: 5;
+}
 
 /* ── Player controls ── */
 #player-controls {
@@ -1103,3 +1114,4 @@ body {
   color: var(--v-text-3);
   opacity: .6;
 }
+
