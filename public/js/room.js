@@ -238,7 +238,7 @@ function initApp() {
     const btnSt = document.getElementById('btn-stop-share');
     if (btnSt && !btnSt.dataset.wired) {
       btnSt.dataset.wired = '1';
-      btnSt.addEventListener('click', () => { if (localStream) localStream.getTracks().forEach(t => t.stop()); });
+      btnSt.addEventListener('click', stopShare);
     }
     if (!rtcSetup) { rtcSetup = true; setupRTCSignaling(); }
   });
@@ -247,7 +247,8 @@ function initApp() {
     addSystem('⛔ ' + message);
     const sg = document.getElementById('ctrl-share-group');
     if (sg) sg.style.display = 'none';
-    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    // Stop sharing if active and cleanup grid + peers
+    stopShare();
   });
 
   socket.on('stream-permission-update', ({ socketId: sid, name, granted }) => {
@@ -288,9 +289,7 @@ function initApp() {
     }
     if (stopBtn2 && !stopBtn2.dataset.wired) {
       stopBtn2.dataset.wired = "1";
-      stopBtn2.addEventListener("click", () => {
-        if (localStream) { localStream.getTracks().forEach(t => t.stop()); _sharingInProgress = false; }
-      });
+      stopBtn2.addEventListener("click", stopShare);
     }
     const ha = document.getElementById("header-actions");
     if (ha) ha.style.display = "flex";
@@ -880,7 +879,8 @@ function addStreamVideo(fromId, stream) {
 function removeStreamVideo(fromId) {
   const s = activeStreams.get(fromId);
   if (s) {
-    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
+    // Do NOT stop remote tracks — only localStream tracks are ours to stop.
+    // Tracks are stopped exclusively by stopShare().
     s.wrapper?.remove();
     activeStreams.delete(fromId);
   }
@@ -951,13 +951,7 @@ function setupScreenshare() {
   const shareGroup = document.getElementById("ctrl-share-group");
   if (shareGroup) shareGroup.style.display = "flex";
   if (btnSh) btnSh.addEventListener('click', startShare);
-  if (btnSt) btnSt.addEventListener('click', () => {
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.stop());
-      // onended will fire async — reset flag now so user can restart immediately
-      _sharingInProgress = false;
-    }
-  });
+  if (btnSt) btnSt.addEventListener('click', stopShare);
   if (btnFs) btnFs.addEventListener('click', () => {
     const v = document.getElementById('screen-video') || document.getElementById('media-container');
     if (v?.requestFullscreen) v.requestFullscreen();
@@ -986,7 +980,7 @@ function ensureStreamGrid() {
   mediaEl.appendChild(grid);
 }
 function setupRTCSignaling() {
-  socket.on("rtc-request-stream", ({ from }) => { if (localStream) sendOffer(from); });
+  socket.on("rtc-request-stream", ({ from }) => { if (localStream && from !== socket.id) sendOffer(from); });
   socket.on("rtc-offer", async ({ from, sdp }) => {
     addSystem("Recebendo stream…");
     const pc = newPC(from, false);
@@ -1023,18 +1017,7 @@ async function startShare() {
     addSystem("Compartilhando sua tela.");
     socket.emit("stream-started");
 
-    localStream.getVideoTracks()[0].onended = () => {
-      _sharingInProgress = false;
-      // Remove host's own tile
-      removeStreamVideo(myId || "local");
-      localStream = null;
-      closeAllPeers();
-      const _bsh2 = document.getElementById("btn-share-screen");
-      const _bst2 = document.getElementById("btn-stop-share");
-      if (_bsh2) _bsh2.style.display = "flex";
-      if (_bst2) _bst2.style.display = "none";
-      addSystem("Compartilhamento encerrado.");
-    };
+    localStream.getVideoTracks()[0].onended = stopShare;
   } catch (err) {
     _sharingInProgress = false;
     if (err.name === "NotAllowedError") addSystem("Compartilhamento cancelado.");
@@ -1042,6 +1025,21 @@ async function startShare() {
   }
 }
 
+
+function stopShare() {
+  _sharingInProgress = false;
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+  }
+  removeStreamVideo(myId || "local");
+  closeAllPeers();
+  const _bsh = document.getElementById("btn-share-screen");
+  const _bst = document.getElementById("btn-stop-share");
+  if (_bsh) _bsh.style.display = "flex";
+  if (_bst) _bst.style.display = "none";
+  addSystem("Compartilhamento encerrado.");
+}
 async function sendOffer(peerId) {
   const pc = newPC(peerId, true);
   const offer = await pc.createOffer();
