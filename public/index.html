@@ -5,142 +5,264 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Watch Party</title>
   <style>
+    /* ── Vapor design — landing page ── */
+    :root {
+      --v-void:        #0d0e11;
+      --v-deep:        #12131a;
+      --v-layer:       #191b24;
+      --v-layer2:      #1f2130;
+      --v-border:      rgba(255,255,255,.07);
+      --v-border-mid:  rgba(255,255,255,.12);
+      --v-text:        #e8eaf0;
+      --v-text-2:      #9ba3b8;
+      --v-text-3:      #5c6480;
+      --v-accent:      #5865f2;
+      --v-accent-glow: rgba(88,101,242,.4);
+      --v-accent-dim:  rgba(88,101,242,.12);
+      --v-green:       #3ba55c;
+      --v-gold:        #f0b132;
+      --v-red:         #ed4245;
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
-      font-family: "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      background: #313338;
-      color: #dbdee1;
+      font-family: "gg sans","Noto Sans","Helvetica Neue",Helvetica,Arial,sans-serif;
+      background: var(--v-void);
+      color: var(--v-text);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 24px;
+      padding: 32px 20px;
+      -webkit-font-smoothing: antialiased;
     }
 
+    /* Background glow */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 40% at 20% 50%, rgba(88,101,242,.07) 0%, transparent 70%),
+        radial-gradient(ellipse 40% 30% at 80% 30%, rgba(155,89,182,.05) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    /* ── Card ── */
     .card {
-      background: #2b2d31;
-      border: 1px solid #3f4147;
-      border-radius: 8px;
-      padding: 40px 48px;
+      position: relative;
+      background: var(--v-deep);
+      border: 1px solid var(--v-border-mid);
+      border-radius: 12px;
+      padding: 40px 44px;
       max-width: 520px;
       width: 100%;
+      box-shadow: 0 24px 64px rgba(0,0,0,.7);
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(88,101,242,.04) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    /* ── Logo section ── */
+    .logo-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 28px;
+    }
+    .logo-icon {
+      width: 60px;
+      height: 60px;
+      border-radius: 16px;
+      background: var(--v-accent-dim);
+      border: 1px solid rgba(88,101,242,.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      margin-bottom: 14px;
+      box-shadow: 0 0 24px rgba(88,101,242,.2);
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--v-text);
+      letter-spacing: -.01em;
+      margin-bottom: 6px;
+    }
+    .sub {
+      color: var(--v-text-3);
+      font-size: 13px;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* ── Error banner ── */
+    .error-banner {
+      display: none;
+      background: rgba(237,66,69,.08);
+      border: 1px solid rgba(237,66,69,.3);
+      color: #f08080;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 20px;
       text-align: center;
     }
 
-    .logo { font-size: 48px; margin-bottom: 16px; }
-    h1    { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
-    .sub  { color: #80848e; font-size: 14px; margin-bottom: 32px; }
-
-    /* Discord login button */
-    .btn-discord {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      background: #5865f2;
-      color: #fff;
-      font-size: 15px;
-      font-weight: 600;
-      padding: 12px 24px;
-      border-radius: 4px;
-      border: none;
-      cursor: pointer;
-      text-decoration: none;
-      transition: background 0.15s, transform 0.1s;
-    }
-    .btn-discord:hover { background: #4752c4; }
-    .btn-discord:active { transform: scale(0.98); }
-    .btn-discord svg { width: 22px; height: 22px; flex-shrink: 0; }
-
-    /* Logged-in user bar */
+    /* ── User bar ── */
     .user-bar {
       display: none;
       align-items: center;
       gap: 12px;
-      background: #1e1f22;
+      background: var(--v-layer);
+      border: 1px solid var(--v-border-mid);
       border-radius: 8px;
-      padding: 10px 16px;
-      margin-bottom: 24px;
-    }
-    .user-bar img {
-      width: 36px; height: 36px;
-      border-radius: 50%;
-      object-fit: cover;
-    }
-    .user-bar .uname {
-      font-size: 14px;
-      font-weight: 600;
-      flex: 1;
-      text-align: left;
-    }
-    .user-bar .logout-link {
-      font-size: 12px;
-      color: #80848e;
-      text-decoration: none;
-    }
-    .user-bar .logout-link:hover { color: #ed4245; }
-
-    /* Error banner */
-    .error-banner {
-      display: none;
-      background: rgba(237,66,69,0.15);
-      border: 1px solid #ed4245;
-      color: #ed4245;
-      padding: 10px 16px;
-      border-radius: 4px;
-      font-size: 13px;
+      padding: 10px 14px;
       margin-bottom: 20px;
     }
-
-    /* Command list */
-    .divider {
-      border: none;
-      border-top: 1px solid #3f4147;
-      margin: 28px 0;
+    .user-bar img {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid rgba(88,101,242,.4);
     }
-    .section-label {
+    .user-bar .uname {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--v-text);
+      flex: 1;
+    }
+    .user-bar .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--v-green);
+      box-shadow: 0 0 6px rgba(59,165,92,.6);
+      flex-shrink: 0;
+    }
+    .logout-link {
       font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #80848e;
-      text-align: left;
-      margin-bottom: 12px;
-    }
-    .cmd-list { list-style: none; display: flex; flex-direction: column; gap: 8px; text-align: left; }
-    .cmd-item {
-      background: #1e1f22;
+      color: var(--v-text-3);
+      text-decoration: none;
+      padding: 4px 8px;
       border-radius: 4px;
-      padding: 10px 14px;
+      transition: color .15s, background .15s;
     }
+    .logout-link:hover { color: var(--v-red); background: rgba(237,66,69,.08); }
+
+    /* ── Discord login button ── */
+    .btn-discord {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      background: var(--v-accent);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 13px 24px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all .15s;
+      letter-spacing: .02em;
+      box-shadow: 0 0 20px var(--v-accent-glow);
+    }
+    .btn-discord:hover {
+      background: #4752c4;
+      box-shadow: 0 0 32px var(--v-accent-glow);
+      transform: translateY(-1px);
+    }
+    .btn-discord:active { transform: translateY(0); }
+    .btn-discord svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+    /* ── Divider ── */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 24px 0 16px;
+    }
+    .divider::before,
+    .divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--v-border);
+    }
+    .divider span {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--v-text-3);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      white-space: nowrap;
+    }
+
+    /* ── Commands list ── */
+    .cmd-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+
+    .cmd-item {
+      background: var(--v-layer);
+      border: 1px solid var(--v-border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      transition: border-color .15s;
+    }
+    .cmd-item:hover { border-color: var(--v-border-mid); }
+
     .cmd-item code {
       display: block;
-      color: #5865f2;
-      font-size: 13px;
-      font-family: "Consolas", "Fira Code", monospace;
+      color: #818cf8;
+      font-size: 12px;
+      font-family: "Consolas","Fira Code",monospace;
       margin-bottom: 4px;
+      letter-spacing: .01em;
     }
-    .cmd-item span { color: #80848e; font-size: 12px; }
+    .cmd-item span {
+      color: var(--v-text-3);
+      font-size: 11.5px;
+      line-height: 1.4;
+    }
+
     .badge {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
       padding: 1px 6px;
       border-radius: 3px;
       font-size: 10px;
       font-weight: 700;
-      margin-right: 4px;
+      margin-right: 3px;
+      letter-spacing: .03em;
+      vertical-align: middle;
     }
-    .badge-dub  { background: #c0392b; color: #fff; }
-    .badge-leg  { background: #2980b9; color: #fff; }
-    .badge-yt   { background: #ff0000; color: #fff; }
-    .badge-rtc  { background: #23a559; color: #fff; }
+    .badge-dub { background: rgba(192,57,43,.3);  color: #e87070; border: 1px solid rgba(192,57,43,.4); }
+    .badge-leg { background: rgba(41,128,185,.3);  color: #6ab0e0; border: 1px solid rgba(41,128,185,.4); }
+    .badge-yt  { background: rgba(255,0,0,.2);     color: #ff6b6b; border: 1px solid rgba(255,0,0,.3); }
+    .badge-rtc { background: rgba(59,165,92,.2);   color: #5cdb8e; border: 1px solid rgba(59,165,92,.3); }
 
+    /* ── Footer ── */
     footer {
-      margin-top: 24px;
-      font-size: 12px;
-      color: #80848e;
+      margin-top: 20px;
+      font-size: 11px;
+      color: var(--v-text-3);
+      text-align: center;
+      letter-spacing: .01em;
     }
-    footer a { color: #5865f2; text-decoration: none; }
-    footer a:hover { text-decoration: underline; }
+    footer a { color: rgba(88,101,242,.8); text-decoration: none; }
+    footer a:hover { color: var(--v-accent); }
 
     @media (max-width: 480px) {
       .card { padding: 28px 20px; }
@@ -149,21 +271,21 @@
 </head>
 <body>
   <div class="card">
-    <div class="logo">📺</div>
-    <h1>Watch Party</h1>
-    <p class="sub">Assista filmes e séries sincronizados com seus amigos do Discord.</p>
+    <div class="logo-wrap">
+      <div class="logo-icon">📺</div>
+      <h1>Watch Party</h1>
+      <p class="sub">Assista junto com seus amigos do Discord.<br>Sincronizado, em tempo real.</p>
+    </div>
 
-    <!-- Error banner (shown via query param) -->
     <div class="error-banner" id="error-banner"></div>
 
-    <!-- Logged-in user bar (shown via JS) -->
     <div class="user-bar" id="user-bar">
       <img id="user-avatar" src="" alt="">
       <span class="uname" id="user-name"></span>
+      <span class="status-dot"></span>
       <a class="logout-link" href="/auth/logout">Sair</a>
     </div>
 
-    <!-- Login button (shown when not authenticated) -->
     <div id="login-section">
       <a class="btn-discord" href="/auth/login">
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -174,15 +296,14 @@
     </div>
 
     <div id="commands-section" style="display:none">
-      <hr class="divider">
-      <p class="section-label">Comandos disponíveis</p>
+      <div class="divider"><span>Comandos disponíveis</span></div>
       <ul class="cmd-list">
         <li class="cmd-item">
           <code>/watch type:Movie name:Inception</code>
           <span>
             <span class="badge badge-dub">🇧🇷 DUB</span>
             <span class="badge badge-leg">🇧🇷 LEG</span>
-            Filme com player integrado, seleção de idioma PT-BR
+            Filme com player integrado e seleção de idioma
           </span>
         </li>
         <li class="cmd-item">
@@ -204,7 +325,7 @@
           <code>/screenshare</code>
           <span>
             <span class="badge badge-rtc">📡 RTC</span>
-            Compartilhamento de tela em tempo real via WebRTC
+            Compartilhamento de tela em tempo real com múltiplas streams
           </span>
         </li>
       </ul>
@@ -217,11 +338,10 @@
   </footer>
 
   <script>
-    // Show error banner from query param
     const params = new URLSearchParams(location.search);
     const errMap = {
       no_code:       "Autorização cancelada.",
-      invalid_state: "Erro de segurança na autenticação. Tente novamente.",
+      invalid_state: "Erro de segurança. Tente novamente.",
       token_failed:  "Falha ao obter token do Discord.",
       auth_failed:   "Erro na autenticação. Tente novamente.",
     };
@@ -232,17 +352,11 @@
       el.style.display = "block";
     }
 
-    // Check if already logged in
-    fetch("/auth/me").then(r => {
-      if (!r.ok) return null;
-      return r.json();
-    }).then(user => {
+    fetch("/auth/me").then(r => r.ok ? r.json() : null).then(user => {
       if (!user) return;
-      // Show user bar
       document.getElementById("user-avatar").src = user.avatar;
       document.getElementById("user-name").textContent = user.username;
       document.getElementById("user-bar").style.display = "flex";
-      // Hide login, show commands
       document.getElementById("login-section").style.display = "none";
       document.getElementById("commands-section").style.display = "block";
     }).catch(() => {});

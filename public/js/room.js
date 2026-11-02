@@ -361,9 +361,10 @@ function addMessage({ socketId, text, name, avatar, ts }) {
 
   const displayName = isSelf ? myUser?.username || "Você" : (name || socketId.slice(0, 6));
   const avatarSrc   = isSelf ? (myUser?.avatar || "") : (avatar || "");
+  const isHostMsg   = isHost && isSelf; // show HOST badge on own messages if host
 
   const el = document.createElement("div");
-  el.className = "msg" + (isSelf ? " self" : "") + (isCont ? " continuation" : "");
+  el.className = "msg msg-new" + (isSelf ? " self" : "") + (isCont ? " continuation" : "");
 
   if (isCont) {
     el.innerHTML = `
@@ -382,6 +383,7 @@ function addMessage({ socketId, text, name, avatar, ts }) {
       <div class="msg-content">
         <div class="msg-header">
           <span class="who">${esc(displayName)}</span>
+          ${isHostMsg ? '<span class="msg-host-badge">HOST</span>' : ""}
           <span class="ts">${formatTs(now)}</span>
         </div>
         <div class="text">${esc(text)}</div>
@@ -424,14 +426,16 @@ function renderMembers() {
     item.dataset.discordId = m.discordId || "";
     item.dataset.tip       = m.name || "";
 
+    const isStreaming = streamPermissions.has(socketId);
+    const ringClass = m.isHost ? "status-host" : isStreaming ? "status-stream" : "status-online";
     item.innerHTML = `
-      <div class="member-avatar-wrap">
+      <div class="member-avatar-wrap ${ringClass}">
         <img class="member-avatar" src="${esc(m.avatar || "")}" alt="${esc(m.name)}" onerror="this.src=''">
         <span class="member-online-dot"></span>
       </div>
       <div class="member-info">
-        <div class="member-name">${esc(m.name)}${isSelf ? " <span style='color:var(--dc-text-muted);font-size:11px'>(você)</span>" : ""}</div>
-        ${m.isHost ? '<div class="member-role">👑 Host</div>' : ""}
+        <div class="member-name">${esc(m.name)}${isSelf ? " <small>(você)</small>" : ""}</div>
+        ${m.isHost ? '<div class="member-role role-host">👑 Host</div>' : isStreaming ? '<div class="member-role role-stream">📡 Stream</div>' : ""}
       </div>
     `;
 
@@ -527,9 +531,10 @@ function updateCountDisplay() {
 
 function updateTypingIndicator(typingUsers, el) {
   if (!el) return;
-  if (typingUsers.size === 0) { el.textContent = ""; return; }
+  if (typingUsers.size === 0) { el.innerHTML = ""; return; }
   const names = [...typingUsers.values()].slice(0, 3).map(n => esc(n));
-  el.textContent = names.join(", ") + (typingUsers.size === 1 ? " está digitando…" : " estão digitando…");
+  const label = names.join(", ") + (typingUsers.size === 1 ? " está digitando" : " estão digitando");
+  el.innerHTML = label + `<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>`;
 }
 
 // ── Room header ───────────────────────────────────────────────────────────────
