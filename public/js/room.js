@@ -826,6 +826,9 @@ function setupScreenshare() {
   const btnSt  = document.getElementById('btn-stop-share');
   const btnFs  = document.getElementById('btn-fullscreen');
   if (pc) pc.style.display = 'flex';
+  // Show share controls for host
+  const shareGroup = document.getElementById("ctrl-share-group");
+  if (shareGroup) shareGroup.style.display = "flex";
   if (btnSh) btnSh.addEventListener('click', startShare);
   if (btnSt) btnSt.addEventListener('click', () => { if (localStream) localStream.getTracks().forEach(t => t.stop()); });
   if (btnFs) btnFs.addEventListener('click', () => {
