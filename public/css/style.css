@@ -1059,3 +1059,47 @@ body {
 
 /* Legacy hidden */
 #start-share-btn { display: none !important; }
+
+/* ── Button role differentiation ────────────────────────────────────────────
+   toggle-members-btn (chat header) = HIDE panel completely
+   members-collapse-btn (panel header) = COLLAPSE to icon-only mode
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Toggle in chat header: subtle sidebar-close look */
+#toggle-members-btn {
+  color: var(--v-text-3);
+  opacity: .8;
+}
+#toggle-members-btn:hover {
+  color: var(--v-text);
+  background: var(--v-glass);
+  opacity: 1;
+}
+#toggle-members-btn.active {
+  color: var(--v-accent);
+  opacity: 1;
+}
+
+/* Collapse in panel header: smaller, clearly inside the panel */
+#members-collapse-btn {
+  color: var(--v-text-3);
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  transition: color .15s, background .15s, transform .2s;
+}
+#members-collapse-btn:hover {
+  color: var(--v-text);
+  background: var(--v-glass);
+}
+/* Arrow rotates when collapsed */
+#members-panel.collapsed #members-collapse-btn {
+  transform: rotate(180deg);
+}
+
+/* When hidden: toggle btn shows "open" state */
+#members-panel.hidden ~ * #toggle-members-btn,
+#right-column:has(#members-panel.hidden) #toggle-members-btn {
+  color: var(--v-text-3);
+  opacity: .6;
+}

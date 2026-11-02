@@ -102,8 +102,10 @@ const MSG_WINDOW  = 5000;
 
   // Collapse toggle
   collapseBtn?.addEventListener('click', () => {
+    // Only collapse/expand — never hide (that is toggle-members-btn's job)
+    if (panel.classList.contains('hidden')) return;
     const isCollapsed = panel.classList.toggle('collapsed');
-    collapseBtn.textContent = isCollapsed ? '›' : '‹';
+    collapseBtn.title = isCollapsed ? 'Expandir' : 'Retrair';
     localStorage.setItem('wp_members_collapsed', isCollapsed ? '1' : '0');
     if (!isCollapsed && savedWidth) panel.style.width = savedWidth;
   });
@@ -146,6 +148,8 @@ function initApp() {
       const hidden = membersPanel.classList.toggle('hidden');
       localStorage.setItem('wp_members_hidden', hidden ? '1' : '0');
       toggleBtn.classList.toggle('active', !hidden);
+      // Update tooltip
+      toggleBtn.title = hidden ? 'Mostrar membros' : 'Ocultar membros';
     });
   }
 
