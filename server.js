@@ -412,7 +412,7 @@ io.on("connection", (socket) => {
   // Stream lifecycle
   socket.on("stream-started", () => {
     if (!currentRoomId) return;
-    socket.to(currentRoomId).emit("stream-started");
+    socket.to(currentRoomId).emit("stream-started", { from: socket.id });
   });
 
   // Kick — host only

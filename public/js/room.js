@@ -305,18 +305,24 @@ function initApp() {
     renderMembers();
   });
 
-  socket.on("stream-started", () => {
-    cleanupScreenVideo();
-    if (!isHost) {
-      // update viewer waiting/receiving indicators
-      const _w2 = document.getElementById("ctrl-viewer-waiting");
-      const _r2 = document.getElementById("ctrl-viewer-receiving");
-      if (_w2) _w2.style.display = "flex";
-      if (_r2) _r2.style.display = "none";
-      addSystem("🟢 Nova transmissão disponível, conectando…");
+  socket.on("stream-started", ({ from }) => {
+    // Do NOT cleanupScreenVideo — that would nuke existing streams in the grid.
+    // Only clear the tile of whoever just re-started (removes stale tile if any).
+    if (from) removeStreamVideo(from);
+
+    if (!localStream) {
+      // We are not sharing — request the new stream from whoever started
+      if (!isHost) {
+        const _w2 = document.getElementById("ctrl-viewer-waiting");
+        const _r2 = document.getElementById("ctrl-viewer-receiving");
+        if (_w2) _w2.style.display = "flex";
+        if (_r2) _r2.style.display = "none";
+        addSystem("🟢 Nova transmissão disponível, conectando…");
+      }
+      setTimeout(() => socket.emit("rtc-request-stream"), 600);
     }
-    // EVERYONE including host requests the stream
-    setTimeout(() => socket.emit("rtc-request-stream"), 600);
+    // If we ARE sharing (localStream active), new peers will request us via user-joined
+    // and we will sendOffer to them — no action needed here.
   });
 
   socket.on("chat-message", addMessage);
