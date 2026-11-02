@@ -819,18 +819,33 @@ function addStreamVideo(fromId, stream) {
 
   activeStreams.set(fromId, { stream, videoEl: v, wrapper });
 
-  // Add to grid
-  const grid = document.getElementById('stream-grid');
-  if (grid) grid.appendChild(wrapper);
-  else mediaEl.appendChild(wrapper);
+  // Add to grid — ensure visible
+  ensureStreamGrid();
+  const grid = document.getElementById("stream-grid");
+  if (grid) {
+    grid.style.display = "flex";
+    grid.appendChild(wrapper);
+  } else {
+    mediaEl.appendChild(wrapper);
+  }
 
-  v.play().catch(() => {});
+  // Play with autoplay muted fallback
+  v.play().catch(() => {
+    v.muted = true;
+    v.play().catch(e => console.warn("[stream] play failed:", e));
+  });
   updateStreamLayout();
 }
 
 function removeStreamVideo(fromId) {
   const s = activeStreams.get(fromId);
-  if (s) { s.wrapper?.remove(); activeStreams.delete(fromId); }
+  if (s) {
+    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
+    s.wrapper?.remove();
+    activeStreams.delete(fromId);
+  }
+  const grid = document.getElementById("stream-grid");
+  if (grid && activeStreams.size === 0) grid.style.display = "none";
   updateStreamLayout();
 }
 
@@ -896,7 +911,13 @@ function setupScreenshare() {
   const shareGroup = document.getElementById("ctrl-share-group");
   if (shareGroup) shareGroup.style.display = "flex";
   if (btnSh) btnSh.addEventListener('click', startShare);
-  if (btnSt) btnSt.addEventListener('click', () => { if (localStream) localStream.getTracks().forEach(t => t.stop()); });
+  if (btnSt) btnSt.addEventListener('click', () => {
+    if (localStream) {
+      localStream.getTracks().forEach(t => t.stop());
+      // onended will fire async — reset flag now so user can restart immediately
+      _sharingInProgress = false;
+    }
+  });
   if (btnFs) btnFs.addEventListener('click', () => {
     const v = document.getElementById('screen-video') || document.getElementById('media-container');
     if (v?.requestFullscreen) v.requestFullscreen();
@@ -921,7 +942,7 @@ function ensureStreamGrid() {
   if (document.getElementById('stream-grid')) return;
   const grid = document.createElement('div');
   grid.id = 'stream-grid';
-  grid.style.cssText = 'display:none;width:100%;height:100%;padding:4px;box-sizing:border-box;background:#111;';
+  // No inline style — CSS handles display:none/.stream-tile etc
   mediaEl.appendChild(grid);
 }
 function setupRTCSignaling() {
@@ -951,31 +972,33 @@ async function startShare() {
   try {
     closeAllPeers();
     localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    cleanupScreenVideo();
-    const video = document.createElement("video");
-    video.id = "screen-video"; video.autoplay = true; video.playsInline = true; video.muted = true;
-    video.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000;display:block;";
-    video.srcObject = localStream;
-    mediaEl.appendChild(video);
-    const _bsh = document.getElementById('btn-share-screen');
-    const _bst = document.getElementById('btn-stop-share');
-    if (_bsh) _bsh.style.display = 'none';
-    if (_bst) _bst.style.display = 'flex';
+
+    // Host also uses the stream-grid so all streams (own + others) are visible together
+    addStreamVideo(myId || "local", localStream);
+
+    const _bsh = document.getElementById("btn-share-screen");
+    const _bst = document.getElementById("btn-stop-share");
+    if (_bsh) _bsh.style.display = "none";
+    if (_bst) _bst.style.display = "flex";
     addSystem("Compartilhando sua tela.");
     socket.emit("stream-started");
+
     localStream.getVideoTracks()[0].onended = () => {
-      video.remove(); localStream = null; _sharingInProgress = false;
+      _sharingInProgress = false;
+      // Remove host's own tile
+      removeStreamVideo(myId || "local");
+      localStream = null;
       closeAllPeers();
-      const _bsh2 = document.getElementById('btn-share-screen');
-      const _bst2 = document.getElementById('btn-stop-share');
-      if (_bsh2) _bsh2.style.display = 'flex';
-      if (_bst2) _bst2.style.display = 'none';
+      const _bsh2 = document.getElementById("btn-share-screen");
+      const _bst2 = document.getElementById("btn-stop-share");
+      if (_bsh2) _bsh2.style.display = "flex";
+      if (_bst2) _bst2.style.display = "none";
       addSystem("Compartilhamento encerrado.");
     };
   } catch (err) {
     _sharingInProgress = false;
     if (err.name === "NotAllowedError") addSystem("Compartilhamento cancelado.");
-    else { addSystem(`Erro ao compartilhar: ${err.message || err.name}`); console.error("[screenshare]", err); }
+    else { addSystem("Erro ao compartilhar: " + (err.message || err.name)); console.error("[screenshare]", err); }
   }
 }
 
