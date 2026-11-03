@@ -597,9 +597,178 @@ function setRoomHeader(type) {
 function setupMedia(type, media) {
   if (type === "screenshare") {
     isHost ? setupScreenshare() : setupRTCViewer();
+  } else if (type === "youtube") {
+    setupYouTube(media);
   }
-  // only screenshare type is supported
 }
+
+// ── YouTube Player ────────────────────────────────────────────────────────────
+let ytPlayer    = null;
+let ytReady     = false;
+let suppressYT  = false;
+let ytQueueData = null; // { queue: [{videoId,title}], queueIndex } or null
+
+function setupYouTube(media) {
+  document.title = "▶ YouTube Watch Party";
+
+  // Determine if this is a playlist or single video
+  const isPlaylist = Array.isArray(media.queue) && media.queue.length > 0;
+  ytQueueData = isPlaylist ? { queue: media.queue, queueIndex: media.queueIndex || 0 } : null;
+
+  const firstVideoId = isPlaylist
+    ? media.queue[media.queueIndex || 0].videoId
+    : media.videoId;
+
+  // Create YT player container
+  const ph = document.createElement("div");
+  ph.id = "yt-player";
+  ph.style.cssText = "width:100%;height:100%;";
+  mediaEl.appendChild(ph);
+
+  // Load YT IFrame API
+  const tag = document.createElement("script");
+  tag.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(tag);
+
+  window.onYouTubeIframeAPIReady = () => {
+    ytPlayer = new YT.Player("yt-player", {
+      videoId: firstVideoId,
+      width: "100%", height: "100%",
+      playerVars: { autoplay: 0, rel: 0, modestbranding: 1 },
+      events: {
+        onReady() {
+          ytReady = true;
+          addSystem("YouTube pronto. Sync ativo.");
+          if (isPlaylist) renderQueuePanel();
+        },
+        onStateChange(e) {
+          if (suppressYT || !ytReady) return;
+          const t = ytPlayer.getCurrentTime();
+          if (e.data === YT.PlayerState.PLAYING) {
+            socket.emit("yt-action", { action: "play",  time: t, name: myUser?.username });
+          } else if (e.data === YT.PlayerState.PAUSED) {
+            socket.emit("yt-action", { action: "pause", time: t, name: myUser?.username });
+          } else if (e.data === YT.PlayerState.ENDED && ytQueueData) {
+            // auto-advance queue
+            socket.emit("yt-next");
+          }
+        },
+      },
+    });
+  };
+
+  // Receive sync from others
+  socket.on("yt-action", ({ action, time, name }) => {
+    if (!ytReady || !ytPlayer) return;
+    suppressYT = true;
+    ytPlayer.seekTo(time, true);
+    if (action === "play")  { ytPlayer.playVideo();  addSystem("▶️ " + esc(name || "Alguém") + " deu play."); }
+    if (action === "pause") { ytPlayer.pauseVideo(); addSystem("⏸ " + esc(name || "Alguém") + " pausou."); }
+    setTimeout(() => { suppressYT = false; }, 800);
+  });
+
+  // Receive queue updates
+  socket.on("yt-queue-update", ({ queue, queueIndex }) => {
+    ytQueueData = { queue, queueIndex };
+    // Load new video if index changed
+    if (ytReady && ytPlayer) {
+      suppressYT = true;
+      ytPlayer.loadVideoById(queue[queueIndex].videoId);
+      setTimeout(() => { suppressYT = false; }, 800);
+    }
+    renderQueuePanel();
+  });
+
+  // Show controls
+  const pc = document.getElementById("player-controls");
+  const btnFs = document.getElementById("btn-fullscreen");
+  if (pc) pc.style.display = "flex";
+  if (btnFs) btnFs.addEventListener("click", () => {
+    const el = document.getElementById("yt-player") || mediaEl;
+    if (el.requestFullscreen) el.requestFullscreen();
+  });
+}
+
+function renderQueuePanel() {
+  if (!ytQueueData) return;
+  const panel  = document.getElementById("queue-panel");
+  const list   = document.getElementById("queue-list");
+  const count  = document.getElementById("queue-count");
+  if (!panel || !list) return;
+
+  panel.style.display = "flex";
+  count.textContent = `${ytQueueData.queue.length} vídeos`;
+  list.innerHTML = "";
+
+  ytQueueData.queue.forEach((item, idx) => {
+    const row = document.createElement("div");
+    row.className = "queue-item" + (idx === ytQueueData.queueIndex ? " active" : "");
+
+    const num = document.createElement("span");
+    num.className = "queue-item-num";
+    num.textContent = idx === ytQueueData.queueIndex ? "▶" : String(idx + 1);
+
+    const title = document.createElement("span");
+    title.className = "queue-item-title";
+    title.textContent = item.title;
+    title.title = item.title;
+
+    row.appendChild(num);
+    row.appendChild(title);
+
+    // Skip button — host only
+    if (isHost && idx !== ytQueueData.queueIndex) {
+      const skipBtn = document.createElement("button");
+      skipBtn.className = "queue-skip-btn";
+      skipBtn.textContent = "⏭";
+      skipBtn.title = "Pular para este vídeo";
+      skipBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        socket.emit("yt-skip", { index: idx });
+      });
+      row.appendChild(skipBtn);
+    }
+
+    // Click row to skip (host only)
+    if (isHost) {
+      row.style.cursor = "pointer";
+      row.addEventListener("click", () => {
+        if (idx !== ytQueueData.queueIndex) socket.emit("yt-skip", { index: idx });
+      });
+    }
+
+    list.appendChild(row);
+  });
+
+  // Scroll active item into view
+  const activeEl = list.querySelector(".active");
+  if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
+
+  // Wire add-video form (once)
+  const form  = document.getElementById("queue-add-form");
+  const input = document.getElementById("queue-add-input");
+  const btn   = document.getElementById("queue-add-btn");
+  if (btn && !btn.dataset.wired) {
+    btn.dataset.wired = "1";
+    const doAdd = () => {
+      const val = input.value.trim();
+      if (!val) return;
+      // Extract video ID client-side (basic check)
+      let videoId = val;
+      try {
+        const u = new URL(val);
+        videoId = u.searchParams.get("v") || u.pathname.split("/").pop() || val;
+      } catch { /* raw ID */ }
+      if (videoId) {
+        socket.emit("yt-queue-add", { videoId, title: videoId });
+        input.value = "";
+      }
+    };
+    btn.addEventListener("click", doAdd);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doAdd(); } });
+  }
+}
+
 
 // ── WebRTC ────────────────────────────────────────────────────────────────────
 

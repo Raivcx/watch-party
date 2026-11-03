@@ -27,7 +27,20 @@
 
       <div id="media-container"></div>
 
-      <div id="player-controls">
+      
+      <!-- Queue panel (YouTube playlist only, shown via JS) -->
+      <div id="queue-panel" style="display:none">
+        <div id="queue-header">
+          <span id="queue-title">▶ Fila</span>
+          <span id="queue-count"></span>
+        </div>
+        <div id="queue-list"></div>
+        <div id="queue-add-form">
+          <input id="queue-add-input" placeholder="Adicionar vídeo (link ou ID)…" autocomplete="off">
+          <button id="queue-add-btn" title="Adicionar à fila">+</button>
+        </div>
+      </div>
+<div id="player-controls">
         <div id="ctrl-share-group" style="display:none">
           <button id="btn-share-screen" class="ctrl-btn ctrl-primary">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -136,3 +149,4 @@
   <script type="module" src="/js/room.js"></script>
 </body>
 </html>
+

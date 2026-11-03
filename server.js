@@ -344,6 +344,54 @@ io.on("connection", (socket) => {
     if (!currentRoomId) return;
     socket.to(currentRoomId).emit("user-stop-typing", { socketId: socket.id });
   });
+  // YouTube sync (play/pause/seek)
+  socket.on("yt-action", ({ action, time, name }) => {
+    if (!currentRoomId) return;
+    socket.to(currentRoomId).emit("yt-action", { action, time, name, from: socket.id });
+  });
+
+  // YouTube queue: advance to next (any client, fires on ENDED)
+  socket.on("yt-next", () => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room?.media?.queue) return;
+    const next = room.media.queueIndex + 1;
+    if (next >= room.media.queue.length) return; // end of playlist
+    room.media.queueIndex = next;
+    io.to(currentRoomId).emit("yt-queue-update", {
+      queue:      room.media.queue,
+      queueIndex: room.media.queueIndex,
+    });
+  });
+
+  // YouTube queue: host skips to a specific index
+  socket.on("yt-skip", ({ index }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room?.media?.queue) return;
+    if (room.hostSocketId !== socket.id) return; // host only
+    const idx = Number(index);
+    if (isNaN(idx) || idx < 0 || idx >= room.media.queue.length) return;
+    room.media.queueIndex = idx;
+    io.to(currentRoomId).emit("yt-queue-update", {
+      queue:      room.media.queue,
+      queueIndex: room.media.queueIndex,
+    });
+  });
+
+  // YouTube queue: any member adds a video
+  socket.on("yt-queue-add", ({ videoId, title }) => {
+    if (!currentRoomId) return;
+    const room = getRoom(currentRoomId);
+    if (!room?.media?.queue) return;
+    if (!videoId || typeof videoId !== "string") return;
+    room.media.queue.push({ videoId, title: String(title || videoId).slice(0, 200) });
+    io.to(currentRoomId).emit("yt-queue-update", {
+      queue:      room.media.queue,
+      queueIndex: room.media.queueIndex,
+    });
+  });
+
 
   // Stream lifecycle
   socket.on("stream-started", () => {
