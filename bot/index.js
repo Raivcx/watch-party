@@ -9,29 +9,20 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
   Events,
 } from "discord.js";
-import { searchTitle, getShowInfo } from "../lib/tmdb.js";
 import { extractYouTubeId } from "../lib/youtube.js";
 import { createRoom, listRooms } from "../lib/roomStore.js";
 import { commands } from "./commands.js";
 
-// Warn early about missing env vars
 if (!process.env.DISCORD_TOKEN) console.error("[bot] DISCORD_TOKEN is not set!");
 if (!process.env.CLIENT_ID)     console.error("[bot] CLIENT_ID is not set!");
-if (!process.env.TMDB_API_KEY)  console.warn("[bot] TMDB_API_KEY is not set — /watch will fail.");
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 const PUBLIC_URL = process.env.PUBLIC_URL || "http://localhost:3000";
 
-// Auto-register guild slash commands on startup.
-// Guild commands appear instantly vs up to 1h for global.
+// Auto-register guild slash commands on startup
 client.once(Events.ClientReady, async (c) => {
   console.log(`[bot] Discord bot online as ${c.user.tag}`);
   try {
@@ -51,191 +42,21 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Modal submits are handled by awaitModalSubmit — ignore here
-  if (interaction.isModalSubmit()) return;
   if (!interaction.isChatInputCommand()) return;
-
   console.log(`[bot] Command received: /${interaction.commandName}`);
-
   try {
-    if (interaction.commandName === "watch") {
-      await handleWatch(interaction);
-    } else if (interaction.commandName === "yt") {
-      await handleYouTube(interaction);
-    } else if (interaction.commandName === "screenshare") {
-      await handleScreenshare(interaction);
-    } else if (interaction.commandName === "status") {
-      await handleStatus(interaction);
-    }
+    if      (interaction.commandName === "yt")          await handleYouTube(interaction);
+    else if (interaction.commandName === "screenshare") await handleScreenshare(interaction);
+    else if (interaction.commandName === "status")      await handleStatus(interaction);
   } catch (err) {
     console.error(`[bot] Unhandled error in /${interaction.commandName}:`, err);
     const payload = { content: "Something went wrong. Please try again.", ephemeral: true };
     try {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.followUp(payload);
-      } else {
-        await interaction.reply(payload);
-      }
-    } catch {
-      // Interaction already expired or modal was shown
-    }
+      if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
+      else await interaction.reply(payload);
+    } catch { /* expired */ }
   }
 });
-
-// --- /watch <type> <name> ---
-// Busca metadados no TMDB, cria sala interna e retorna link do player com HLS.
-async function handleWatch(interaction) {
-  const type = interaction.options.getString("type"); // movie | serie
-  const name = interaction.options.getString("name");
-
-  if (type === "serie") {
-    // Modal DEVE ser a primeira resposta — não pode defer antes
-    const modal = new ModalBuilder()
-      .setCustomId(`serie-ep:${name}`)
-      .setTitle("Season & Episode");
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("season")
-          .setLabel("Season number")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("e.g. 1")
-          .setRequired(true)
-          .setMinLength(1)
-          .setMaxLength(3),
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("episode")
-          .setLabel("Episode number")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("e.g. 1")
-          .setRequired(true)
-          .setMinLength(1)
-          .setMaxLength(3),
-      ),
-    );
-
-    await interaction.showModal(modal);
-
-    let modalInteraction;
-    try {
-      modalInteraction = await interaction.awaitModalSubmit({
-        filter: (i) =>
-          i.customId.startsWith("serie-ep:") && i.user.id === interaction.user.id,
-        time: 5 * 60 * 1000,
-      });
-    } catch {
-      console.log("[bot] Modal timed out or dismissed.");
-      return;
-    }
-
-    await modalInteraction.deferReply();
-
-    const season  = parseInt(modalInteraction.fields.getTextInputValue("season"),  10) || 1;
-    const episode = parseInt(modalInteraction.fields.getTextInputValue("episode"), 10) || 1;
-
-
-    // Validate season/episode against TMDB before creating room
-    let showInfo;
-    try {
-      // Do a quick search first to get the TMDB id, then validate
-      const tempResult = await searchTitle("serie", name);
-      if (tempResult) {
-        showInfo = await getShowInfo(tempResult.tmdbId);
-        const maxSeason = showInfo.seasons.filter(s => s.season_number > 0).length;
-        if (season < 1 || season > maxSeason) {
-          return modalInteraction.editReply(`**${tempResult.title}** tem ${maxSeason} temporada(s). Temporada ${season} não existe.`);
-        }
-        const seasonData = showInfo.seasons.find(s => s.season_number === season);
-        if (seasonData && episode > seasonData.episode_count) {
-          return modalInteraction.editReply(`**${tempResult.title}** S${season} tem ${seasonData.episode_count} episódios. Episódio ${episode} não existe.`);
-        }
-      }
-    } catch {
-      // Validation failed — proceed anyway, better to create room than block
-    }
-    let result;
-    try {
-      result = await searchTitle("serie", name);
-    } catch (err) {
-      console.error("[bot] TMDB searchTitle failed:", err.message);
-      return modalInteraction.editReply("Couldn't reach TMDB. Check that TMDB_API_KEY is set on Render.");
-    }
-
-    if (!result) {
-      return modalInteraction.editReply(`No results found for "**${name}**".`);
-    }
-
-    const room = createRoom({
-      type: "serie",
-      media: { ...result, season, episode },
-      hostUserId: interaction.user.id,
-    });
-
-    const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
-
-    const embed = new EmbedBuilder()
-      .setTitle(`Watch Party — ${result.title}`)
-      .setDescription(`📺 ${result.title} S${season}E${episode}\n\nClique no botão para entrar na sala.`)
-      .setURL(roomUrl)
-      .setColor(0x5865f2);
-
-    if (result.poster)   embed.setThumbnail(result.poster);
-    if (result.overview) embed.addFields({ name: "Overview", value: result.overview.slice(0, 300) });
-
-    return modalInteraction.editReply({
-      embeds: [embed],
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
-        ),
-      ],
-    });
-  }
-
-  // Filmes: defer e busca TMDB
-  await interaction.deferReply();
-
-  let result;
-  try {
-    result = await searchTitle(type, name);
-  } catch (err) {
-    console.error("[bot] TMDB searchTitle failed:", err.message);
-    return interaction.editReply("Couldn't reach TMDB. Check that TMDB_API_KEY is set on Render.");
-  }
-
-  if (!result) {
-    return interaction.editReply(`No results found for "**${name}**".`);
-  }
-
-  const room = createRoom({
-    type: "movie",
-    media: { ...result },
-    hostUserId: interaction.user.id,
-  });
-
-  const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
-
-  const embed = new EmbedBuilder()
-    .setTitle(`Watch Party — ${result.title}`)
-    .setDescription(`🎬 ${result.title} (${result.year})\n\nClique no botão para entrar na sala.`)
-    .setURL(roomUrl)
-    .setColor(0x5865f2);
-
-  if (result.poster)   embed.setThumbnail(result.poster);
-  if (result.overview) embed.addFields({ name: "Overview", value: result.overview.slice(0, 300) });
-
-  return interaction.editReply({
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
-      ),
-    ],
-  });
-}
 
 // --- /yt <link> ---
 async function handleYouTube(interaction) {
@@ -243,15 +64,12 @@ async function handleYouTube(interaction) {
   const videoId = extractYouTubeId(link);
 
   if (!videoId) {
-    return interaction.reply({
-      content: "That doesn't look like a valid YouTube link.",
-      ephemeral: true,
-    });
+    return interaction.reply({ content: "Link do YouTube inválido.", ephemeral: true });
   }
 
   const room = createRoom({
-    type: "youtube",
-    media: { videoId, url: `https://www.youtube.com/watch?v=${videoId}` },
+    type:       "youtube",
+    media:      { videoId, url: `https://www.youtube.com/watch?v=${videoId}` },
     hostUserId: interaction.user.id,
   });
 
@@ -277,8 +95,8 @@ async function handleYouTube(interaction) {
 // --- /screenshare ---
 async function handleScreenshare(interaction) {
   const room = createRoom({
-    type: "screenshare",
-    media: {},
+    type:       "screenshare",
+    media:      {},
     hostUserId: interaction.user.id,
   });
 
@@ -301,10 +119,8 @@ async function handleScreenshare(interaction) {
 }
 
 // --- /status ---
-// Lista todas as salas abertas no servidor com links para entrar.
 async function handleStatus(interaction) {
   await interaction.deferReply({ ephemeral: true });
-
   const rooms = listRooms();
 
   if (rooms.length === 0) {
@@ -318,15 +134,13 @@ async function handleStatus(interaction) {
     });
   }
 
-  const typeEmoji = { movie: "🎬", serie: "📺", youtube: "▶️", screenshare: "🖥️" };
-  const typeLabel = { movie: "Filme", serie: "Série", youtube: "YouTube", screenshare: "Screenshare" };
+  const typeEmoji = { youtube: "▶️", screenshare: "🖥️" };
+  const typeLabel = { youtube: "YouTube", screenshare: "Screenshare" };
 
   const lines = rooms.map((r) => {
-    const emoji = typeEmoji[r.type] || "🎬";
-    const label = typeLabel[r.type] || r.type;
-    const title = r.type === "screenshare"
-      ? "Screen Share"
-      : r.title + (r.season ? ` S${r.season}E${r.episode}` : "");
+    const emoji   = typeEmoji[r.type] || "📺";
+    const label   = typeLabel[r.type] || r.type;
+    const title   = r.type === "youtube" ? `YouTube · ${r.title}` : "Screen Share";
     const roomUrl = `${PUBLIC_URL}/room/${r.id}`;
     const users   = r.userCount > 0 ? `👥 ${r.userCount}` : "👤 vazia";
     const age     = Math.floor((Date.now() - r.createdAt) / 60000);
@@ -343,7 +157,7 @@ async function handleStatus(interaction) {
   return interaction.editReply({ embeds: [embed] });
 }
 
-// Start the bot — wrapped in try/catch para não derrubar o servidor HTTP se o token for inválido
+// Start bot
 try {
   await client.login(process.env.DISCORD_TOKEN);
 } catch (err) {

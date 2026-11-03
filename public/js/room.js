@@ -1,5 +1,5 @@
 // Watch Party Room — Vanilla JS client
-// Discord OAuth2 identity · Discord-style UI · WebRTC · iframe · YouTube sync
+// Discord OAuth2 identity · Discord-style UI · WebRTC
 
 // ── Auth: fetch Discord identity before connecting ────────────────────────────
 let myUser = null;
@@ -208,7 +208,7 @@ function initApp() {
     }
 
     // Set room header
-    setRoomHeader(info.type, info.media);
+    setRoomHeader(info.type);
     addSystem(`Sala pronta · ${isHost ? "Você é o host" : "Você é viewer"}`);
     setupMedia(info.type, info.media);
     if (isHost) { const ha = document.getElementById('header-actions'); if (ha) ha.style.display = 'flex'; }
@@ -367,17 +367,6 @@ function initApp() {
     renderMembers();
     if (peers[socketId]) { peers[socketId].close(); delete peers[socketId]; }
     removeStreamVideo(socketId);
-  });
-
-  socket.on("viewer-joined-notify", ({ name: viewerName }) => {
-    const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
-    const btn = document.getElementById("sync-btn");
-    if (!btn) return;
-    const displayName = esc(viewerName && viewerName !== "anon" ? viewerName : "Alguém");
-    addSystem(`👤 ${displayName} entrou — clique 📍 Sync para sincronizar (você está em ${formatTime(elapsed)}).`);
-    btn.style.background = "#f0b132";
-    btn.classList.add("sync-pulse");
-    setTimeout(() => { btn.style.background = "#23a559"; btn.classList.remove("sync-pulse"); }, 5000);
   });
 
   // Typing indicator
@@ -596,252 +585,20 @@ function updateTypingIndicator(typingUsers, el) {
 }
 
 // ── Room header ───────────────────────────────────────────────────────────────
-const TYPE_ICONS  = { movie: "🎬", serie: "📺", youtube: "▶️", screenshare: "🖥️" };
-const TYPE_LABELS = { movie: "Filme", serie: "Série", youtube: "YouTube", screenshare: "Screenshare" };
-
-function setRoomHeader(type, media) {
+// ── Room header ─────────────────────────────────────────────────────────────────
+function setRoomHeader(type) {
   if (!roomIconEl || !roomTitleEl) return;
-  roomIconEl.textContent = TYPE_ICONS[type] || "📺";
-  roomBadgeEl.textContent = TYPE_LABELS[type] || type;
+  roomIconEl.textContent = "🖥️";
+  roomBadgeEl.textContent = "Screenshare";
   roomBadgeEl.style.display = "inline-block";
-
-  if (type === "movie" || type === "serie") {
-    roomTitleEl.textContent = media.title + (media.season ? ` · S${media.season}E${media.episode}` : "");
-  } else if (type === "youtube") {
-    roomTitleEl.textContent = "YouTube Sync";
-  } else if (type === "screenshare") {
-    roomTitleEl.textContent = "Screen Share";
-  }
+  roomTitleEl.textContent = "Screen Share";
 }
-
 // ── Media router ──────────────────────────────────────────────────────────────
 function setupMedia(type, media) {
-  if      (type === "movie" || type === "serie") setupIframePlayer(type, media);
-  else if (type === "youtube")                   setupYouTube(media.videoId);
-  else if (type === "screenshare")               isHost ? setupScreenshare() : setupRTCViewer();
-}
-
-// ── VidSrc Iframe Player ──────────────────────────────────────────────────────
-let iframeSources  = [];
-let currentSrcIdx  = 0;
-let currentIframe  = null;
-let iframeLoadedAt = 0;
-
-async function setupIframePlayer(type, media) {
-  document.title = `${TYPE_ICONS[type]} ${media.title}${media.season ? ` S${media.season}E${media.episode}` : ""} — Watch Party`;
-
-  let sources;
-  try {
-    const res = await fetch(`/api/embed/${roomId}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
-    sources = body.sources || [];
-  } catch (err) {
-    showError("Não foi possível carregar o player. Tente novamente.");
-    addSystem("Erro ao buscar fontes: " + err.message);
-    return;
+  if (type === "screenshare") {
+    isHost ? setupScreenshare() : setupRTCViewer();
   }
-
-  if (!sources.length) { showError("Nenhuma fonte de vídeo disponível."); return; }
-
-  iframeSources = sources;
-  currentSrcIdx = 0;
-  buildIframeBar(media);
-
-  socket.on("iframe-sync", ({ time, sourceIdx, autoSync }) => {
-    if (isHost) return;
-    const t = time || 0;
-    loadIframe(sourceIdx || 0, t);
-    addSystem(`${autoSync ? "⚡ Sincronizado automaticamente" : "🔄 Sincronizado com o host"}${t > 5 ? ` em ${formatTime(t)}` : ""}.`);
-  });
-}
-
-function loadIframe(idx, startAtSeconds = 0) {
-  if (!iframeSources[idx]) return;
-  currentSrcIdx = idx;
-  if (currentIframe) { currentIframe.remove(); currentIframe = null; }
-  if (window._iframeWatchdog) { clearTimeout(window._iframeWatchdog); window._iframeWatchdog = null; }
-
-  let url = iframeSources[idx].url;
-  if (startAtSeconds > 5) {
-    const sep = url.includes("?") ? "&" : "?";
-    if      (url.includes("moviesnexus")) url += `${sep}startAt=${startAtSeconds}`;
-    else if (url.includes("vidcore"))     url += `${sep}t=${startAtSeconds}`;
-    else if (url.includes("vidsrc"))      url += `${sep}t=${startAtSeconds}`;
-    else if (url.includes("autoembed"))   url += `${sep}t=${startAtSeconds}`;
-  }
-
-  const iframe = document.createElement("iframe");
-  iframe.src             = url;
-  iframe.allowFullscreen = true;
-  iframe.allow           = "autoplay; fullscreen; encrypted-media; picture-in-picture";
-  iframe.style.cssText   = "width:100%;height:100%;border:none;display:block;background:#000;";
-  mediaEl.appendChild(iframe);
-  currentIframe  = iframe;
-  iframeLoadedAt = Date.now() - (startAtSeconds * 1000);
-
-  const seekLabel = startAtSeconds > 5 ? ` · ⏩ ${formatTime(startAtSeconds)}` : "";
-  addSystem(`▶ ${iframeSources[idx].provider} · ${iframeSources[idx].label || "Auto"}${seekLabel}`);
-
-  // Watchdog: if no load in 12s, try next source in the same lang group by priority
-  const baseUrl = iframeSources[idx].url.split("?")[0];
-  window._iframeWatchdog = setTimeout(() => {
-    if (!currentIframe || !currentIframe.src.startsWith(baseUrl)) return;
-    const nextInGroup = iframeSources
-      .map((s, i) => ({ ...s, i }))
-      .filter(s => s.lang === iframeSources[idx].lang && s.i !== idx)
-      .sort((a, b) => (a.priority || 99) - (b.priority || 99));
-    if (nextInGroup.length > 0) {
-      addSystem(`⏱ ${iframeSources[idx].provider} sem resposta — tentando ${nextInGroup[0].provider}…`);
-      loadIframe(nextInGroup[0].i, startAtSeconds);
-    } else {
-      addSystem("⚠️ Nenhuma fonte disponível. Tente outro idioma.");
-    }
-  }, 12000);
-}
-
-// Block popup attempts from player iframes
-(function blockPopups() {
-  const _open = window.open.bind(window);
-  window.open = function(url, target, features) {
-    if (!url) return _open(url, target, features);
-    console.warn("[security] window.open bloqueado:", url);
-    return null;
-  };
-})();
-
-function buildIframeBar(media) {
-  const bar = document.createElement("div");
-  bar.id = "iframe-bar";
-
-  // Title
-  const titleSpan = document.createElement("span");
-  titleSpan.textContent = media.title + (media.season ? ` · S${media.season}E${media.episode}` : "");
-  titleSpan.style.cssText = "opacity:.6;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;";
-  bar.appendChild(titleSpan);
-
-  const dot = document.createElement("span");
-  dot.textContent = "·"; dot.style.opacity = ".3";
-  bar.appendChild(dot);
-
-  const groups = [
-    { key:"dub",  label:"🇧🇷 DUB",  color:"#e74c3c", title:"Dublado PT-BR" },
-    { key:"leg",  label:"🇧🇷 LEG",  color:"#3498db", title:"Legendado PT-BR" },
-    { key:"auto", label:"EN/Auto", color:"#555",    title:"Inglês / Auto" },
-  ];
-  const groupIdx = { dub:0, leg:0, auto:0 };
-  let activeKey = null;
-
-  function activateGroup(key) {
-    activeKey = key;
-    bar.querySelectorAll("[data-lang-group]").forEach(b => {
-      const g = groups.find(g => g.key === b.dataset.langGroup);
-      b.style.background = b.dataset.langGroup === key ? (g?.color || "#555") : "transparent";
-    });
-  }
-
-  groups.forEach(({ key, label, color, title: ttip }) => {
-    if (!iframeSources.some(s => s.lang === key)) return;
-    const btn = document.createElement("button");
-    btn.dataset.langGroup = key;
-    btn.textContent = label;
-    btn.title = ttip;
-    btn.style.cssText = `padding:3px 9px;border:1px solid ${color};background:${key==="dub"?color:"transparent"};color:#fff;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;`;
-    btn.addEventListener("click", () => {
-      activateGroup(key);
-      const srcs = iframeSources.map((s,i) => ({...s,i})).filter(s => s.lang === key);
-      const next = srcs[groupIdx[key] % srcs.length];
-      groupIdx[key] = (groupIdx[key]+1) % srcs.length;
-      loadIframe(next.i);
-    });
-    bar.appendChild(btn);
-  });
-
-  const spacer = document.createElement("div");
-  spacer.style.flex = "1";
-  bar.appendChild(spacer);
-
-  // Fullscreen button
-  const fsBtn = document.createElement("button");
-  fsBtn.textContent = "⛶"; fsBtn.title = "Fullscreen";
-  fsBtn.style.cssText = "padding:3px 8px;background:transparent;color:#fff;font-size:14px;border:1px solid #555;border-radius:4px;cursor:pointer;";
-  fsBtn.addEventListener("click", () => {
-    const t = currentIframe || mediaEl;
-    if (t.requestFullscreen) t.requestFullscreen();
-    else if (t.webkitRequestFullscreen) t.webkitRequestFullscreen();
-  });
-  bar.appendChild(fsBtn);
-
-  if (isHost) {
-    const syncBtn = document.createElement("button");
-    syncBtn.id = "sync-btn";
-    syncBtn.textContent = "📍 Sync";
-    syncBtn.title = "Envia sua posição atual para todos os viewers";
-    syncBtn.style.cssText = "padding:3px 12px;background:#23a559;color:#fff;font-weight:700;border:none;border-radius:4px;cursor:pointer;font-size:11px;transition:background 0.3s;";
-    syncBtn.addEventListener("click", () => {
-      const elapsed = Math.floor((Date.now() - iframeLoadedAt) / 1000);
-      socket.emit("iframe-sync", { time: elapsed, sourceIdx: currentSrcIdx });
-      addSystem(`📍 Sync enviado (${formatTime(elapsed)} desde o início).`);
-      syncBtn.textContent = "✅";
-      setTimeout(() => { syncBtn.textContent = "📍 Sync"; }, 2000);
-    });
-    bar.appendChild(syncBtn);
-
-    setInterval(() => {
-      const el = document.getElementById("sync-btn");
-      if (!el) return;
-      el.title = `Posição atual: ${formatTime(Math.floor((Date.now()-iframeLoadedAt)/1000))} — clique para sincronizar`;
-    }, 5000);
-  } else {
-    const hint = document.createElement("span");
-    hint.textContent = "⏳ aguardando host";
-    hint.style.cssText = "font-size:10px;color:var(--dc-text-muted);";
-    bar.appendChild(hint);
-  }
-
-  mediaEl.style.position = "relative";
-  mediaEl.appendChild(bar);
-  mediaEl.style.paddingTop = "38px";
-
-  const firstDub = iframeSources.findIndex(s => s.lang === "dub");
-  loadIframe(firstDub >= 0 ? firstDub : 0);
-  activateGroup(firstDub >= 0 ? "dub" : "auto");
-}
-
-// ── YouTube ───────────────────────────────────────────────────────────────────
-let ytPlayer = null, ytReady = false, suppressYT = false;
-
-function setupYouTube(videoId) {
-  document.title = "▶ YouTube Watch Party";
-  const ph = document.createElement("div");
-  ph.id = "yt-player"; ph.style.cssText = "width:100%;height:100%;";
-  mediaEl.appendChild(ph);
-  const tag = document.createElement("script");
-  tag.src = "https://www.youtube.com/iframe_api";
-  document.head.appendChild(tag);
-  window.onYouTubeIframeAPIReady = () => {
-    ytPlayer = new YT.Player("yt-player", {
-      videoId, width:"100%", height:"100%",
-      playerVars: { autoplay:0, rel:0, modestbranding:1 },
-      events: {
-        onReady() { ytReady = true; addSystem("YouTube pronto. Sync ativo."); },
-        onStateChange(e) {
-          if (suppressYT || !ytReady) return;
-          const t = ytPlayer.getCurrentTime();
-      if      (e.data === YT.PlayerState.PLAYING) socket.emit("yt-action", { action:"play",  time:t, name: myUser?.username });
-      else if (e.data === YT.PlayerState.PAUSED)  socket.emit("yt-action", { action:"pause", time:t, name: myUser?.username });
-        },
-      },
-    });
-  };
-  socket.on("yt-action", ({ action, time, name }) => {
-    if (!ytReady || !ytPlayer) return;
-    suppressYT = true;
-    ytPlayer.seekTo(time, true);
-    if (action === "play")  { ytPlayer.playVideo();  addSystem("▶️ " + esc(name || "Alguém") + " deu play."); }
-    if (action === "pause") { ytPlayer.pauseVideo(); addSystem("⏸ " + esc(name || "Alguém") + " pausou."); }
-    setTimeout(() => { suppressYT = false; }, 800);
-  });
+  // only screenshare type is supported
 }
 
 // ── WebRTC ────────────────────────────────────────────────────────────────────
