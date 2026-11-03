@@ -331,6 +331,23 @@ function initApp() {
     }
   });
 
+
+  socket.on("stream-stopped", ({ from }) => {
+    // Sharer stopped their stream — remove their tile and close our peer connection
+    if (from) {
+      removeStreamVideo(from);
+      if (peers[from]) { peers[from].close(); delete peers[from]; }
+      const member = roomMembers.get(from);
+      addSystem("🔴 " + esc(member?.name || from.slice(0,6)) + " encerrou o compartilhamento.");
+    }
+    // If no more streams, reset viewer controls
+    if (activeStreams.size === 0) {
+      const _wt = document.getElementById("ctrl-viewer-waiting");
+      const _rv = document.getElementById("ctrl-viewer-receiving");
+      if (_wt && !localStream) _wt.style.display = "flex";
+      if (_rv) _rv.style.display = "none";
+    }
+  });
   socket.on("chat-message", addMessage);
 
   socket.on("user-joined", ({ socketId, discordId, name, avatar, userCount }) => {
@@ -805,18 +822,18 @@ function setupYouTube(videoId) {
         onStateChange(e) {
           if (suppressYT || !ytReady) return;
           const t = ytPlayer.getCurrentTime();
-          if      (e.data === YT.PlayerState.PLAYING) socket.emit("yt-action", { action:"play",  time:t });
-          else if (e.data === YT.PlayerState.PAUSED)  socket.emit("yt-action", { action:"pause", time:t });
+      if      (e.data === YT.PlayerState.PLAYING) socket.emit("yt-action", { action:"play",  time:t, name: myUser?.username });
+      else if (e.data === YT.PlayerState.PAUSED)  socket.emit("yt-action", { action:"pause", time:t, name: myUser?.username });
         },
       },
     });
   };
-  socket.on("yt-action", ({ action, time }) => {
+  socket.on("yt-action", ({ action, time, name }) => {
     if (!ytReady || !ytPlayer) return;
     suppressYT = true;
     ytPlayer.seekTo(time, true);
-    if (action === "play")  ytPlayer.playVideo();
-    if (action === "pause") ytPlayer.pauseVideo();
+    if (action === "play")  { ytPlayer.playVideo();  addSystem("▶️ " + esc(name || "Alguém") + " deu play."); }
+    if (action === "pause") { ytPlayer.pauseVideo(); addSystem("⏸ " + esc(name || "Alguém") + " pausou."); }
     setTimeout(() => { suppressYT = false; }, 800);
   });
 }
@@ -959,8 +976,11 @@ let _sharingInProgress = false;
 const ICE = { iceServers: [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
+  // Free TURN via Open Relay Project — helps with symmetric NAT
+  { urls: "turn:openrelay.metered.ca:80",      username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:openrelay.metered.ca:443",     username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
 ]};
-
 function setupScreenshare() {
   if (rtcSetup) return; rtcSetup = true;
   document.title = "🖥️ Screen Share — Watch Party";
@@ -1025,6 +1045,10 @@ function setupRTCSignaling() {
 }
 
 async function startShare() {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    addSystem("⚠️ Compartilhamento de tela não disponível neste dispositivo.");
+    return;
+  }
   if (_sharingInProgress) return;
   _sharingInProgress = true;
   try {
@@ -1062,6 +1086,7 @@ function stopShare() {
   const _bst = document.getElementById("btn-stop-share");
   if (_bsh) _bsh.style.display = "flex";
   if (_bst) _bst.style.display = "none";
+  if (socket) socket.emit("stream-stopped");
   addSystem("Compartilhamento encerrado.");
 }
 async function sendOffer(peerId) {
@@ -1078,6 +1103,13 @@ function newPC(peerId, isHostPeer) {
   if (isHostPeer && localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
   pc.onicecandidate = ({ candidate }) => {
     if (candidate) socket.emit("rtc-ice", { to: peerId, candidate });
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      // activeStreams key is the peerId — use it directly
+      removeStreamVideo(peerId);
+      addSystem("⚠️ Stream de " + (roomMembers.get(peerId)?.name || peerId.slice(0,6)) + " perdido.");
+    }
   };
   pc.ontrack = ({ streams }) => {
     if (!streams || !streams[0]) return;

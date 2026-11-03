@@ -415,6 +415,12 @@ io.on("connection", (socket) => {
     socket.to(currentRoomId).emit("stream-started", { from: socket.id });
   });
 
+  // Stream lifecycle — stop
+  socket.on("stream-stopped", () => {
+    if (!currentRoomId) return;
+    socket.to(currentRoomId).emit("stream-stopped", { from: socket.id });
+  });
+
   // Kick — host only
   socket.on("kick-user", ({ discordId }) => {
     if (!currentRoomId) return;

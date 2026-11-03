@@ -24,3 +24,7 @@ services:
       - key: DISCORD_REDIRECT_URI
         value: https://watch-party-bdle.onrender.com/auth/callback
 
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false

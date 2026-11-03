@@ -14,7 +14,7 @@ import {
   TextInputStyle,
   Events,
 } from "discord.js";
-import { searchTitle } from "../lib/tmdb.js";
+import { searchTitle, getShowInfo } from "../lib/tmdb.js";
 import { extractYouTubeId } from "../lib/youtube.js";
 import { createRoom, listRooms } from "../lib/roomStore.js";
 import { commands } from "./commands.js";
@@ -136,6 +136,26 @@ async function handleWatch(interaction) {
     const season  = parseInt(modalInteraction.fields.getTextInputValue("season"),  10) || 1;
     const episode = parseInt(modalInteraction.fields.getTextInputValue("episode"), 10) || 1;
 
+
+    // Validate season/episode against TMDB before creating room
+    let showInfo;
+    try {
+      // Do a quick search first to get the TMDB id, then validate
+      const tempResult = await searchTitle("serie", name);
+      if (tempResult) {
+        showInfo = await getShowInfo(tempResult.tmdbId);
+        const maxSeason = showInfo.seasons.filter(s => s.season_number > 0).length;
+        if (season < 1 || season > maxSeason) {
+          return modalInteraction.editReply(`**${tempResult.title}** tem ${maxSeason} temporada(s). Temporada ${season} não existe.`);
+        }
+        const seasonData = showInfo.seasons.find(s => s.season_number === season);
+        if (seasonData && episode > seasonData.episode_count) {
+          return modalInteraction.editReply(`**${tempResult.title}** S${season} tem ${seasonData.episode_count} episódios. Episódio ${episode} não existe.`);
+        }
+      }
+    } catch {
+      // Validation failed — proceed anyway, better to create room than block
+    }
     let result;
     try {
       result = await searchTitle("serie", name);
