@@ -306,12 +306,11 @@ function initApp() {
   });
 
   socket.on("stream-started", ({ from }) => {
-    // Do NOT cleanupScreenVideo — that would nuke existing streams in the grid.
-    // Only clear the tile of whoever just re-started (removes stale tile if any).
+    // Only clear the stale tile of whoever just (re)started — never nuke the whole grid.
     if (from) removeStreamVideo(from);
 
     if (!localStream) {
-      // We are not sharing — request the new stream from whoever started
+      // We are not sharing — request the new stream from whoever started.
       if (!isHost) {
         const _w2 = document.getElementById("ctrl-viewer-waiting");
         const _r2 = document.getElementById("ctrl-viewer-receiving");
@@ -320,9 +319,16 @@ function initApp() {
         addSystem("🟢 Nova transmissão disponível, conectando…");
       }
       setTimeout(() => socket.emit("rtc-request-stream"), 600);
+    } else {
+      // We ARE also sharing. The new sharer does not know about our stream yet.
+      // Send them an offer so they receive our stream, and request theirs back.
+      if (from) {
+        setTimeout(() => {
+          sendOffer(from);                    // push our stream to them
+          socket.emit("rtc-request-stream"); // ask for their stream too
+        }, 600);
+      }
     }
-    // If we ARE sharing (localStream active), new peers will request us via user-joined
-    // and we will sendOffer to them — no action needed here.
   });
 
   socket.on("chat-message", addMessage);
