@@ -1,4 +1,4 @@
-// Discord bot: listens for slash commands, creates rooms, replies with links.
+﻿// Discord bot: listens for slash commands, creates rooms, replies with links.
 import "dotenv/config";
 import {
   Client,
@@ -11,7 +11,7 @@ import {
   ButtonStyle,
   Events,
 } from "discord.js";
-import { extractYouTubeId, extractPlaylistId, fetchPlaylistItems } from "../lib/youtube.js";
+import { extractYouTubeId, extractPlaylistId, fetchPlaylistItems, fetchVideoTitle } from "../lib/youtube.js";
 import { createRoom, listRooms, getRooms } from "../lib/roomStore.js";
 import { saveClip, listClips } from "../lib/clips.js";
 import { commands } from "./commands.js";
@@ -47,6 +47,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   console.log(`[bot] Command received: /${interaction.commandName}`);
   try {
     if      (interaction.commandName === "yt")          await handleYouTube(interaction);
+    else if (interaction.commandName === "ytpl")        await handlePlaylist(interaction);
     else if (interaction.commandName === "screenshare") await handleScreenshare(interaction);
     else if (interaction.commandName === "status")      await handleStatus(interaction);
     else if (interaction.commandName === "clip")        await handleClip(interaction);
@@ -61,45 +62,50 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// --- /yt video <link> | /yt playlist <link> ---
+// --- /yt <link> — sala com fila habilitada, começa com 1 vídeo ---
 async function handleYouTube(interaction) {
-  const sub  = interaction.options.getSubcommand();
-  const link = interaction.options.getString("link");
+  const link    = interaction.options.getString("link");
+  const videoId = extractYouTubeId(link);
+  if (!videoId) return interaction.reply({ content: "Link do YouTube inválido.", ephemeral: true });
 
-  if (sub === "video") {
-    // --- vídeo único (retrocompatível) ---
-    const videoId = extractYouTubeId(link);
-    if (!videoId) return interaction.reply({ content: "Link do YouTube inválido.", ephemeral: true });
+  // Fetch video title if API key available
+  const videoTitle = await fetchVideoTitle(videoId);
 
-    const room = createRoom({
-      type:       "youtube",
-      media:      { videoId, url: `https://www.youtube.com/watch?v=${videoId}` },
-      hostUserId: interaction.user.id,
-    });
-    const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
+  // Cria sala com fila contendo o vídeo inicial — mais podem ser adicionados no player
+  const room = createRoom({
+    type:       "youtube",
+    media:      {
+      queue:      [{ videoId, title: videoTitle }],
+      queueIndex: 0,
+    },
+    hostUserId: interaction.user.id,
+  });
+  const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
 
-    const embed = new EmbedBuilder()
-      .setTitle("📺 YouTube Watch Party")
-      .setDescription("Clique no botão para entrar na sala sincronizada.")
-      .setURL(roomUrl)
-      .setColor(0xff0000)
-      .setThumbnail(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`);
+  const embed = new EmbedBuilder()
+    .setTitle("📺 YouTube Watch Party")
+    .setDescription("Fila ativada — adicione mais vídeos dentro do player.\nClique no botão para entrar.")
+    .setURL(roomUrl)
+    .setColor(0xff0000)
+    .setThumbnail(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`);
 
-    return interaction.reply({
-      embeds: [embed],
-      components: [new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
-      )],
-    });
-  }
+  return interaction.reply({
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
+    )],
+  });
+}
 
-  // --- playlist ---
+// --- /ytpl <link> — carrega playlist completa ---
+async function handlePlaylist(interaction) {
   if (!process.env.YOUTUBE_API_KEY) {
-    return interaction.reply({ content: "⚠️ YOUTUBE_API_KEY não está configurado. Peça ao admin para configurar.", ephemeral: true });
+    return interaction.reply({ content: "⚠️ YOUTUBE_API_KEY não está configurado.", ephemeral: true });
   }
 
   await interaction.deferReply();
 
+  const link       = interaction.options.getString("link");
   const playlistId = extractPlaylistId(link);
   if (!playlistId) {
     return interaction.editReply("Link de playlist inválido. Use um link com `list=PLxxx`.");
@@ -117,11 +123,7 @@ async function handleYouTube(interaction) {
 
   const room = createRoom({
     type:       "youtube",
-    media:      {
-      queue:         items,
-      queueIndex:    0,
-      playlistTitle: `Playlist (${items.length} vídeos)`,
-    },
+    media:      { queue: items, queueIndex: 0 },
     hostUserId: interaction.user.id,
   });
   const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
@@ -129,7 +131,7 @@ async function handleYouTube(interaction) {
   const preview = items.slice(0, 5).map((v, i) => `${i + 1}. ${v.title}`).join("\n");
 
   const embed = new EmbedBuilder()
-    .setTitle(`📋 Playlist Watch Party`)
+    .setTitle("📋 Playlist Watch Party")
     .setDescription(`**${items.length} vídeos** na fila\n\n${preview}${items.length > 5 ? `\n*...e mais ${items.length - 5}*` : ""}`)
     .setURL(roomUrl)
     .setColor(0xff0000)

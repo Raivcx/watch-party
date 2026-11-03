@@ -1,26 +1,22 @@
 // Shared slash command definitions
-import {
-  SlashCommandBuilder,
-} from "discord.js";
+import { SlashCommandBuilder } from "discord.js";
 
 export const commands = [
-  // /yt video <link> | /yt playlist <link>
+  // /yt <link> — cria sala com fila, começa com 1 video, pode adicionar mais no player
   new SlashCommandBuilder()
     .setName("yt")
-    .setDescription("Cria uma sala sincronizada do YouTube")
-    .addSubcommand(sub =>
-      sub.setName("video")
-         .setDescription("Vídeo único do YouTube")
-         .addStringOption(opt =>
-           opt.setName("link").setDescription("Link do YouTube ou ID do vídeo").setRequired(true)
-         )
+    .setDescription("Cria uma sala YouTube com fila — adicione mais vídeos dentro do player")
+    .addStringOption(opt =>
+      opt.setName("link").setDescription("Link ou ID do vídeo inicial").setRequired(true)
     )
-    .addSubcommand(sub =>
-      sub.setName("playlist")
-         .setDescription("Playlist do YouTube (toca em sequência com auto-avanço)")
-         .addStringOption(opt =>
-           opt.setName("link").setDescription("Link da playlist do YouTube").setRequired(true)
-         )
+    .toJSON(),
+
+  // /ytpl <link> — carrega uma playlist inteira de uma vez
+  new SlashCommandBuilder()
+    .setName("ytpl")
+    .setDescription("Cria uma sala YouTube com uma playlist completa")
+    .addStringOption(opt =>
+      opt.setName("link").setDescription("Link da playlist do YouTube").setRequired(true)
     )
     .toJSON(),
 
