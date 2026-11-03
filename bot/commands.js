@@ -31,22 +31,4 @@ export const commands = [
     name: "status",
     description: "Mostra as salas abertas no servidor com links para entrar",
   },
-
-  // /clip <título>
-  new SlashCommandBuilder()
-    .setName("clip")
-    .setDescription("Marca um momento da sessão atual")
-    .addStringOption(opt =>
-      opt.setName("titulo").setDescription("Título do momento").setRequired(true)
-    )
-    .toJSON(),
-
-  // /clips [@usuario]
-  new SlashCommandBuilder()
-    .setName("clips")
-    .setDescription("Lista os clips recentes do servidor")
-    .addUserOption(opt =>
-      opt.setName("usuario").setDescription("Filtrar por usuário").setRequired(false)
-    )
-    .toJSON(),
 ];

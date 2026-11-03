@@ -12,7 +12,6 @@ import {
   getRoomMembers, listRooms,
 } from "./lib/roomStore.js";
 import { createSession, getSession, deleteSession, parseCookie } from "./lib/sessions.js";
-import { saveClip, listClips } from "./lib/clips.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -215,39 +214,6 @@ app.get("/api/room/:id/members", requireAuth, (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: "Invalid room ID" });
   const members = getRoomMembers(req.params.id);
   res.json(members);
-});
-
-// Clip API — save a clip (requires auth)
-app.post("/api/clip", requireAuth, async (req, res) => {
-  const user = await getUser(req);
-  const { title, roomId } = req.body;
-  if (!title || typeof title !== "string" || !title.trim()) {
-    return res.status(400).json({ error: "title is required" });
-  }
-  // Verify user is in the room
-  if (roomId) {
-    const room = getRoom(roomId);
-    if (!room || !room.members.has(user.id)) {
-      return res.status(403).json({ error: "You are not in this room" });
-    }
-  }
-  try {
-    await saveClip({
-      roomId:   roomId || "web",
-      guildId:  "web",
-      userId:   user.id,
-      username: user.username,
-      title:    title.trim().slice(0, 200),
-    });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("[clip] save error:", err.message);
-    res.status(500).json({ error: "Failed to save clip" });
-  }
-});
-// Room page ÔÇö requires auth
-app.get("/room/:id", requireAuth, (_req, res) => {
-  res.sendFile(join(__dirname, "public", "room.html"));
 });
 
 // ÔöÇÔöÇ Socket.IO ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
