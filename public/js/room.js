@@ -156,6 +156,52 @@ function initApp() {
   // Send button
   document.getElementById('send-btn')?.addEventListener('click', sendChat);
 
+  // Clip button — open modal
+  const clipBtn    = document.getElementById("btn-clip");
+  const clipModal  = document.getElementById("clip-modal");
+  const clipInput  = document.getElementById("clip-title-input");
+  const clipSave   = document.getElementById("clip-save-btn");
+  const clipCancel = document.getElementById("clip-cancel-btn");
+
+  clipBtn?.addEventListener("click", () => {
+    if (!clipModal) return;
+    clipInput.value = "";
+    clipModal.style.display = "flex";
+    setTimeout(() => clipInput.focus(), 50);
+  });
+
+  clipCancel?.addEventListener("click", () => { clipModal.style.display = "none"; });
+  clipModal?.addEventListener("click", (e) => { if (e.target === clipModal) clipModal.style.display = "none"; });
+
+  const doSaveClip = async () => {
+    const title = clipInput?.value.trim();
+    if (!title) { clipInput?.focus(); return; }
+    clipSave.disabled = true;
+    clipSave.textContent = "Salvando…";
+    try {
+      const res = await fetch("/api/clip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, roomId }),
+      });
+      if (res.ok) {
+        clipModal.style.display = "none";
+        addSystem(`✂️ Clip salvo: "${esc(title)}"`);
+      } else {
+        addSystem("⚠️ Erro ao salvar clip.");
+      }
+    } catch {
+      addSystem("⚠️ Erro ao salvar clip.");
+    } finally {
+      clipSave.disabled = false;
+      clipSave.textContent = "Salvar";
+    }
+  };
+
+  clipSave?.addEventListener("click", doSaveClip);
+  clipInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSaveClip(); } });
+
+
   socket = io({ transports: ["websocket", "polling"] });
 
   // Chat input: Enter sends

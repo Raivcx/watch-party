@@ -1239,3 +1239,20 @@ body {
   transition: background .15s;
 }
 #queue-add-btn:hover { background: #4752c4; }
+
+/* Clip modal input */
+.clip-input {
+  width: 100%;
+  background: var(--v-layer);
+  border: 1px solid var(--v-border-mid);
+  border-radius: var(--v-radius-sm);
+  padding: 8px 12px;
+  color: var(--v-text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .2s;
+}
+.clip-input:focus { border-color: rgba(88,101,242,.5); box-shadow: 0 0 0 3px rgba(88,101,242,.1); }
+.clip-input::placeholder { color: var(--v-text-3); }
+

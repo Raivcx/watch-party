@@ -64,6 +64,9 @@
           </span>
         </div>
         <div class="ctrl-spacer"></div>
+        <button id="btn-clip" class="ctrl-btn ctrl-icon" title="Salvar clip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M6 20.5A2.5 2.5 0 0 1 3.5 18V6a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v12.5a2.5 2.5 0 0 1-2.5 2.5"/><path d="M6 20.5h12"/><path d="M9 9h6M9 13h4"/></svg>
+        </button>
         <button id="btn-fullscreen" class="ctrl-btn ctrl-icon" title="Tela cheia">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
         </button>
@@ -145,8 +148,27 @@
   <div id="error-overlay"><div id="error-box"><h1>Sala Indisponível</h1><p id="error-text">Esta sala não existe ou expirou.</p></div></div>
   <div id="kicked-overlay"><div id="kicked-box"><h2>Você foi removido</h2><p id="kicked-text">O host removeu você desta sala.</p></div></div>
 
+
+  <!-- Clip modal -->
+  <div id="clip-modal" class="modal-overlay" style="display:none">
+    <div class="modal-box" style="max-width:380px">
+      <div class="modal-header">
+        <h3>✂️ Salvar Clip</h3>
+        <button id="clip-cancel-btn" class="icon-btn" style="margin-left:auto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p style="font-size:13px;color:var(--v-text-2);margin-bottom:14px">Dê um título para este momento:</p>
+      <input id="clip-title-input" class="clip-input" placeholder="ex: esse momento foi incrível…" maxlength="200" autocomplete="off">
+      <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+        <button id="clip-save-btn" class="ctrl-btn ctrl-primary" style="padding:7px 20px;border-radius:6px">Salvar</button>
+      </div>
+    </div>
+  </div>
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/js/room.js"></script>
 </body>
 </html>
+
+
 
