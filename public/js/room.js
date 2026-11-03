@@ -837,8 +837,15 @@ function addStreamVideo(fromId, stream) {
 
   const label = document.createElement("div");
   label.className = "stream-label";
-  const member = [...roomMembers.values()].find(m => m.socketId === fromId || fromId === myId);
-  label.textContent = member ? member.name : fromId.slice(0, 6);
+  // roomMembers key IS the socketId — use .get() directly
+  let labelName;
+  if (fromId === myId || fromId === "local") {
+    labelName = myUser?.username || "Você";
+  } else {
+    const member = roomMembers.get(fromId);
+    labelName = member ? member.name : fromId.slice(0, 6);
+  }
+  label.textContent = labelName;
 
   const badge = document.createElement("div");
   badge.className = "stream-live-badge";
@@ -877,8 +884,13 @@ function addStreamVideo(fromId, stream) {
     mediaEl.appendChild(wrapper);
   }
 
-  // Always muted at start — autoplay guaranteed; click tile to unmute
-  v.play().catch(e => console.warn("[stream] play failed:", e));
+  // Play when metadata is ready — avoids black frame on slow WebRTC negotiation
+  const tryPlay = () => v.play().catch(e => console.warn("[stream] play failed:", e));
+  if (v.readyState >= 2) {
+    tryPlay();
+  } else {
+    v.addEventListener("loadedmetadata", tryPlay, { once: true });
+  }
   updateStreamLayout();
 }
 
@@ -1062,15 +1074,24 @@ function newPC(peerId, isHostPeer) {
     if (candidate) socket.emit("rtc-ice", { to: peerId, candidate });
   };
   pc.ontrack = ({ streams }) => {
-    if (!streams || !streams[0]) return; // guard: stream not ready yet
+    if (!streams || !streams[0]) return;
     const stream = streams[0];
-    const memberName = ([...roomMembers.entries()].find(([sid]) => sid === peerId) || [])[1]?.name || peerId.slice(0,6);
-    addStreamVideo(peerId, stream);
-    addSystem("📺 Recebendo tela de " + memberName + ".");
-    const _wt = document.getElementById("ctrl-viewer-waiting");
-    const _rv = document.getElementById("ctrl-viewer-receiving");
-    if (_wt) _wt.style.display = "none";
-    if (_rv) _rv.style.display = "flex";
+    // Wait until at least one track is live before rendering
+    const doAdd = () => {
+      const member = roomMembers.get(peerId);
+      const memberName = member ? member.name : peerId.slice(0, 6);
+      addStreamVideo(peerId, stream);
+      addSystem("📺 Recebendo tela de " + memberName + ".");
+      const _wt = document.getElementById("ctrl-viewer-waiting");
+      const _rv = document.getElementById("ctrl-viewer-receiving");
+      if (_wt) _wt.style.display = "none";
+      if (_rv) _rv.style.display = "flex";
+    };
+    if (stream.getTracks().some(t => t.readyState === "live")) {
+      doAdd();
+    } else {
+      stream.addEventListener("active", doAdd, { once: true });
+    }
   };
   return pc;
 }
