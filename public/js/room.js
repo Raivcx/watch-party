@@ -665,8 +665,10 @@ function loadIframe(idx, startAtSeconds = 0) {
   let url = iframeSources[idx].url;
   if (startAtSeconds > 5) {
     const sep = url.includes("?") ? "&" : "?";
-    if (url.includes("moviesnexus")) url += `${sep}startAt=${startAtSeconds}`;
-    else if (url.includes("vidcore")) url += `${sep}t=${startAtSeconds}`;
+    if      (url.includes("moviesnexus")) url += `${sep}startAt=${startAtSeconds}`;
+    else if (url.includes("vidcore"))     url += `${sep}t=${startAtSeconds}`;
+    else if (url.includes("vidsrc"))      url += `${sep}t=${startAtSeconds}`;
+    else if (url.includes("autoembed"))   url += `${sep}t=${startAtSeconds}`;
   }
 
   const iframe = document.createElement("iframe");
@@ -681,17 +683,21 @@ function loadIframe(idx, startAtSeconds = 0) {
   const seekLabel = startAtSeconds > 5 ? ` · ⏩ ${formatTime(startAtSeconds)}` : "";
   addSystem(`▶ ${iframeSources[idx].provider} · ${iframeSources[idx].label || "Auto"}${seekLabel}`);
 
+  // Watchdog: if no load in 12s, try next source in the same lang group by priority
   const baseUrl = iframeSources[idx].url.split("?")[0];
   window._iframeWatchdog = setTimeout(() => {
-    if (currentIframe && currentIframe.src.startsWith(baseUrl)) {
-      const nextInGroup = iframeSources.map((s,i) => ({...s,i}))
-        .filter(s => s.lang === iframeSources[idx].lang && s.i !== idx);
-      if (nextInGroup.length > 0) {
-        addSystem(`⏱ Sem resposta — tentando ${nextInGroup[0].provider}…`);
-        loadIframe(nextInGroup[0].i, startAtSeconds);
-      }
+    if (!currentIframe || !currentIframe.src.startsWith(baseUrl)) return;
+    const nextInGroup = iframeSources
+      .map((s, i) => ({ ...s, i }))
+      .filter(s => s.lang === iframeSources[idx].lang && s.i !== idx)
+      .sort((a, b) => (a.priority || 99) - (b.priority || 99));
+    if (nextInGroup.length > 0) {
+      addSystem(`⏱ ${iframeSources[idx].provider} sem resposta — tentando ${nextInGroup[0].provider}…`);
+      loadIframe(nextInGroup[0].i, startAtSeconds);
+    } else {
+      addSystem("⚠️ Nenhuma fonte disponível. Tente outro idioma.");
     }
-  }, 14000);
+  }, 12000);
 }
 
 // Block popup attempts from player iframes
