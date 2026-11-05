@@ -1,4 +1,4 @@
-﻿// v2 ÔÇö Discord OAuth2 + Discord UI
+// v2 ÔÇö Discord OAuth2 + Discord UI
 // Main server: Express (REST + static) + Socket.IO + Discord OAuth2
 import "dotenv/config";
 import { randomBytes }  from "crypto";
@@ -214,6 +214,11 @@ app.get("/api/room/:id/members", requireAuth, (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: "Invalid room ID" });
   const members = getRoomMembers(req.params.id);
   res.json(members);
+});
+
+// Room page — requires auth
+app.get("/room/:id", requireAuth, (_req, res) => {
+  res.sendFile(join(__dirname, "public", "room.html"));
 });
 
 // ÔöÇÔöÇ Socket.IO ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
