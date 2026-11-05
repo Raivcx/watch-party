@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "deploy-commands": "node bot/deploy-commands.js",
-    "build": "echo 'build ok'"
+    "build": "echo 'build ok'",
+    "clear-commands": "node bot/clear-global-commands.js"
   },
   "engines": {
     "node": ">=18.0.0"
