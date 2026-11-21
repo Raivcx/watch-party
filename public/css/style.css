@@ -235,6 +235,41 @@ body {
   border-color: transparent;
   box-shadow: 0 0 16px var(--v-red-glow);
 }
+#ctrl-share-group {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.ctrl-btn.ctrl-camera {
+  background: rgba(155,89,182,.2);
+  border-color: rgba(155,89,182,.45);
+  color: #d7a8eb;
+}
+.ctrl-btn.ctrl-camera:hover {
+  background: var(--v-purple);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 0 16px var(--v-purple-glow);
+}
+.ctrl-btn.ctrl-toggle {
+  font-size: 11px;
+  padding: 5px 10px;
+}
+.ctrl-btn.ctrl-toggle.active {
+  background: rgba(59,165,92,.16);
+  border-color: rgba(59,165,92,.45);
+  color: #6ee796;
+}
+.ctrl-btn.ctrl-muted {
+  background: rgba(237,66,69,.14);
+  border-color: rgba(237,66,69,.35);
+  color: var(--v-red);
+}
+.stream-tile video.camera-local {
+  transform: scaleX(-1);
+}
 .ctrl-btn.ctrl-icon {
   padding: 6px 9px;
   background: transparent;

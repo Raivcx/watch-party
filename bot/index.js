@@ -9,10 +9,12 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   Events,
 } from "discord.js";
 import { extractYouTubeId, extractPlaylistId, fetchPlaylistItems, fetchVideoTitle } from "../lib/youtube.js";
-import { createRoom, listRooms } from "../lib/roomStore.js";
+import { createRoom, getRoom, closeRoom, listRooms } from "../lib/roomStore.js";
 import { commands } from "./commands.js";
 
 if (!process.env.DISCORD_TOKEN) console.error("[bot] DISCORD_TOKEN is not set!");
@@ -42,15 +44,22 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  console.log(`[bot] Command received: /${interaction.commandName}`);
   try {
-    if      (interaction.commandName === "yt")          await handleYouTube(interaction);
-    else if (interaction.commandName === "ytpl")        await handlePlaylist(interaction);
-    else if (interaction.commandName === "screenshare") await handleScreenshare(interaction);
-    else if (interaction.commandName === "status")      await handleStatus(interaction);
+    if (interaction.isChatInputCommand()) {
+      console.log(`[bot] Command received: /${interaction.commandName}`);
+      if      (interaction.commandName === "yt")          await handleYouTube(interaction);
+      else if (interaction.commandName === "ytpl")        await handlePlaylist(interaction);
+      else if (interaction.commandName === "screenshare") await handleScreenshare(interaction);
+      else if (interaction.commandName === "camera")      await handleCamera(interaction);
+      else if (interaction.commandName === "status")      await handleStatus(interaction);
+      else if (interaction.commandName === "close")       await handleClose(interaction);
+    } else if (interaction.isStringSelectMenu() && interaction.customId === "close_room_select") {
+      await handleCloseSelect(interaction);
+    } else if (interaction.isButton() && interaction.customId === "close_room_cancel") {
+      await interaction.update({ content: "Operação cancelada.", embeds: [], components: [] });
+    }
   } catch (err) {
-    console.error(`[bot] Unhandled error in /${interaction.commandName}:`, err);
+    console.error(`[bot] Unhandled error in interaction:`, err);
     const payload = { content: "Algo deu errado. Tente novamente.", ephemeral: true };
     try {
       if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
@@ -159,6 +168,23 @@ async function handleScreenshare(interaction) {
   });
 }
 
+// --- /camera ---
+async function handleCamera(interaction) {
+  const room = createRoom({ type: "camera", media: {}, hostUserId: interaction.user.id });
+  const roomUrl = `${PUBLIC_URL}/room/${room.id}`;
+  const embed = new EmbedBuilder()
+    .setTitle("📷 Camera Stream Room")
+    .setDescription("Clique no botão para entrar.\nO host poderá transmitir a câmera ou tela via WebRTC.")
+    .setURL(roomUrl)
+    .setColor(0x9b59b6);
+  return interaction.reply({
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setLabel("Join Room").setStyle(ButtonStyle.Link).setURL(roomUrl),
+    )],
+  });
+}
+
 // --- /status ---
 async function handleStatus(interaction) {
   await interaction.deferReply({ ephemeral: true });
@@ -168,12 +194,12 @@ async function handleStatus(interaction) {
       embeds: [new EmbedBuilder().setTitle("📊 Status do Servidor").setDescription("Nenhuma sala aberta no momento.").setColor(0x5865f2)],
     });
   }
-  const typeEmoji = { youtube: "▶️", screenshare: "🖥️" };
-  const typeLabel = { youtube: "YouTube", screenshare: "Screenshare" };
+  const typeEmoji = { youtube: "▶️", screenshare: "🖥️", camera: "📷" };
+  const typeLabel = { youtube: "YouTube", screenshare: "Screenshare", camera: "Câmera" };
   const lines = rooms.map((r) => {
     const emoji   = typeEmoji[r.type] || "📺";
     const label   = typeLabel[r.type] || r.type;
-    const title   = r.type === "youtube" ? `YouTube · ${r.title}` : "Screen Share";
+    const title   = r.type === "youtube" ? `YouTube · ${r.title}` : r.type === "camera" ? "Camera Stream" : "Screen Share";
     const roomUrl = `${PUBLIC_URL}/room/${r.id}`;
     const users   = r.userCount > 0 ? `👥 ${r.userCount}` : "👤 vazia";
     const age     = Math.floor((Date.now() - r.createdAt) / 60000);
@@ -186,6 +212,93 @@ async function handleStatus(interaction) {
       .setDescription(lines.join("\n\n"))
       .setColor(0x5865f2)
       .setFooter({ text: PUBLIC_URL })],
+  });
+}
+
+// --- /close — abre menu do Discord para selecionar a sala a ser fechada ---
+async function handleClose(interaction) {
+  const rooms = listRooms();
+  if (rooms.length === 0) {
+    return interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setTitle("🗑️ Fechar Sala")
+        .setDescription("Nenhuma sala aberta no momento.")
+        .setColor(0x5865f2)],
+      ephemeral: true,
+    });
+  }
+
+  const typeEmoji = { youtube: "▶️", screenshare: "🖥️", camera: "📷" };
+  const typeLabel = { youtube: "YouTube", screenshare: "Screen Share", camera: "Câmera" };
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("close_room_select")
+    .setPlaceholder("Selecione a sala que deseja fechar…")
+    .addOptions(
+      rooms.slice(0, 25).map((r) => {
+        const emoji  = typeEmoji[r.type] || "📺";
+        const label  = typeLabel[r.type] || r.type;
+        const title  = r.type === "youtube" ? `YouTube: ${r.title}` : label;
+        const users  = r.userCount > 0 ? `${r.userCount} online` : "vazia";
+        const age    = Math.floor((Date.now() - r.createdAt) / 60000);
+        const ageStr = age < 60 ? `${age}m` : `${Math.floor(age / 60)}h${age % 60}m`;
+        return new StringSelectMenuOptionBuilder()
+          .setLabel(`${emoji} ${title} (${users})`.slice(0, 100))
+          .setDescription(`${label} · Aberta há ${ageStr} · ID ${r.id.slice(0, 8)}`.slice(0, 100))
+          .setValue(r.id);
+      }),
+    );
+
+  const cancelBtn = new ButtonBuilder()
+    .setCustomId("close_room_cancel")
+    .setLabel("Cancelar")
+    .setStyle(ButtonStyle.Secondary);
+
+  const embed = new EmbedBuilder()
+    .setTitle("🗑️ Fechar Sala")
+    .setDescription("Selecione abaixo qual sala ativa deseja encerrar. Todos os participantes conectados serão desconectados.")
+    .setColor(0xed4245);
+
+  return interaction.reply({
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(select),
+      new ActionRowBuilder().addComponents(cancelBtn),
+    ],
+    ephemeral: true,
+  });
+}
+
+async function handleCloseSelect(interaction) {
+  const roomId = interaction.values[0];
+  const room = getRoom(roomId);
+  if (!room) {
+    return interaction.update({
+      content: "⚠️ Esta sala já foi fechada ou expirou.",
+      embeds: [],
+      components: [],
+    });
+  }
+
+  const queueTitle = Array.isArray(room.media?.queue)
+    ? room.media.queue[room.media.queueIndex || 0]?.title
+    : null;
+  const displayTitle = room.type === "youtube"
+    ? `YouTube · ${room.media?.title || queueTitle || room.media?.videoId || "Sala"}`
+    : room.type === "camera"
+      ? "Camera Stream"
+      : "Screen Share";
+
+  closeRoom(roomId, { closedBy: interaction.user.globalName || interaction.user.username });
+
+  const embed = new EmbedBuilder()
+    .setTitle("✅ Sala fechada")
+    .setDescription(`A sala **${displayTitle}** (\`${roomId.slice(0, 8)}\`) foi encerrada com sucesso.`)
+    .setColor(0x3ba55c);
+
+  return interaction.update({
+    embeds: [embed],
+    components: [],
   });
 }
 

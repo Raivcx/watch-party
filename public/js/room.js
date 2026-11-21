@@ -223,6 +223,14 @@ function initApp() {
     setTimeout(() => { window.location.href = "/"; }, 4000);
   });
 
+  socket.on("room-closed", ({ message } = {}) => {
+    if (localStream) stopShare();
+    closeAllPeers();
+    errorText.textContent = message || "Esta sala foi fechada.";
+    errorOverlay.style.display = "flex";
+    setTimeout(() => { window.location.href = "/"; }, 4000);
+  });
+
   socket.on('stream-permission-granted', ({ message }) => {
     addSystem('🎥 ' + message);
     const pc = document.getElementById('player-controls');
@@ -231,16 +239,7 @@ function initApp() {
     if (pc) pc.style.display = 'flex';
     if (sg) sg.style.display = 'flex';
     if (wt) wt.style.display = 'none';
-    const btnSh = document.getElementById('btn-share-screen');
-    if (btnSh && !btnSh.dataset.wired) {
-      btnSh.dataset.wired = '1';
-      btnSh.addEventListener('click', startShare);
-    }
-    const btnSt = document.getElementById('btn-stop-share');
-    if (btnSt && !btnSt.dataset.wired) {
-      btnSt.dataset.wired = '1';
-      btnSt.addEventListener('click', stopShare);
-    }
+    wireShareControls();
     if (!rtcSetup) { rtcSetup = true; setupRTCSignaling(); }
   });
 
@@ -282,16 +281,7 @@ function initApp() {
     if (_sg) _sg.style.display = "flex";
     if (_wt) _wt.style.display = "none";
     if (_rv) _rv.style.display = "none";
-    const shareBtn2 = document.getElementById("btn-share-screen");
-    const stopBtn2  = document.getElementById("btn-stop-share");
-    if (shareBtn2 && !shareBtn2.dataset.wired) {
-      shareBtn2.dataset.wired = "1";
-      shareBtn2.addEventListener("click", startShare);
-    }
-    if (stopBtn2 && !stopBtn2.dataset.wired) {
-      stopBtn2.dataset.wired = "1";
-      stopBtn2.addEventListener("click", stopShare);
-    }
+    wireShareControls();
     const ha = document.getElementById("header-actions");
     if (ha) ha.style.display = "flex";
     renderMembers();
@@ -306,9 +296,12 @@ function initApp() {
     renderMembers();
   });
 
-  socket.on("stream-started", ({ from }) => {
+  socket.on("stream-started", ({ from, kind }) => {
     // Only clear the stale tile of whoever just (re)started — never nuke the whole grid.
-    if (from) removeStreamVideo(from);
+    if (from) {
+      remoteStreamKinds.set(from, kind === "camera" ? "camera" : "screen");
+      removeStreamVideo(from);
+    }
 
     if (!localStream) {
       // We are not sharing — request the new stream from whoever started.
@@ -336,6 +329,7 @@ function initApp() {
   socket.on("stream-stopped", ({ from }) => {
     // Sharer stopped their stream — remove their tile and close our peer connection
     if (from) {
+      remoteStreamKinds.delete(from);
       removeStreamVideo(from);
       if (peers[from]) { peers[from].close(); delete peers[from]; }
       const member = roomMembers.get(from);
@@ -589,15 +583,27 @@ function updateTypingIndicator(typingUsers, el) {
 // ── Room header ─────────────────────────────────────────────────────────────────
 function setRoomHeader(type) {
   if (!roomIconEl || !roomTitleEl) return;
-  roomIconEl.textContent = "🖥️";
-  roomBadgeEl.textContent = "Screenshare";
-  roomBadgeEl.style.display = "inline-block";
-  roomTitleEl.textContent = "Screen Share";
+  if (type === "youtube") {
+    roomIconEl.textContent = "▶️";
+    roomBadgeEl.textContent = "YouTube";
+    roomBadgeEl.style.display = "inline-block";
+    roomTitleEl.textContent = "YouTube Watch Party";
+  } else if (type === "camera") {
+    roomIconEl.textContent = "📷";
+    roomBadgeEl.textContent = "Câmera";
+    roomBadgeEl.style.display = "inline-block";
+    roomTitleEl.textContent = "Camera Stream";
+  } else {
+    roomIconEl.textContent = "🖥️";
+    roomBadgeEl.textContent = "Screenshare";
+    roomBadgeEl.style.display = "inline-block";
+    roomTitleEl.textContent = "Screen Share";
+  }
 }
 // ── Media router ──────────────────────────────────────────────────────────────
 function setupMedia(type, media) {
-  if (type === "screenshare") {
-    isHost ? setupScreenshare() : setupRTCViewer();
+  if (type === "screenshare" || type === "camera") {
+    isHost ? setupScreenshare(type) : setupRTCViewer(type);
   } else if (type === "youtube") {
     setupYouTube(media);
   }
@@ -776,10 +782,14 @@ function renderQueuePanel() {
 // ── Multi-stream support ──────────────────────────────────────────────────────
 // Map<socketId, { stream, videoEl, peerId }> — active incoming streams
 const activeStreams = new Map();
+const remoteStreamKinds = new Map();
 
-function addStreamVideo(fromId, stream) {
+function addStreamVideo(fromId, stream, options = {}) {
   // Remove existing video for this peer if any
   removeStreamVideo(fromId);
+
+  const isLocal  = fromId === myId || fromId === "local";
+  const isCamera = options.isCamera ?? (remoteStreamKinds.get(fromId) === "camera");
 
   const wrapper = document.createElement("div");
   wrapper.id = "stream-" + fromId;
@@ -787,21 +797,22 @@ function addStreamVideo(fromId, stream) {
 
   const v = document.createElement("video");
   v.autoplay = true; v.playsInline = true;
-  // Start muted so autoplay is guaranteed; user can click tile to unmute
+  // Always keep local preview muted to prevent local echo/feedback; remote starts muted for autoplay
   v.muted = true;
+  if (isLocal && isCamera) v.classList.add("camera-local");
   v.srcObject = stream;
 
   const label = document.createElement("div");
   label.className = "stream-label";
   // roomMembers key IS the socketId — use .get() directly
   let labelName;
-  if (fromId === myId || fromId === "local") {
+  if (isLocal) {
     labelName = myUser?.username || "Você";
   } else {
     const member = roomMembers.get(fromId);
     labelName = member ? member.name : fromId.slice(0, 6);
   }
-  label.textContent = labelName;
+  label.textContent = (isCamera ? "📷 " : "") + labelName;
 
   const badge = document.createElement("div");
   badge.className = "stream-live-badge";
@@ -813,8 +824,8 @@ function addStreamVideo(fromId, stream) {
 
   wrapper.addEventListener("click", () => {
     focusStream(fromId);
-    // Toggle mute on click
-    if (v.muted) {
+    // Never unmute own local preview (prevents audio feedback / echo)
+    if (!isLocal && v.muted) {
       v.muted = false;
       // Show brief "🔊" indicator
       const s2 = activeStreams.get(fromId);
@@ -902,6 +913,9 @@ function updateStreamLayout() {
 // Set of socketIds that the host has granted stream permission to
 const streamPermissions = new Set();
 let localStream = null;
+let localStreamKind = null; // "screen" | "camera" | null
+let isolateDiscordAudio = true; // exclude OS/system audio by default to prevent Discord echo
+let cameraMicEnabled = false;   // mic off by default on camera to prevent Discord echo
 const peers     = {};
 let rtcSetup    = false;
 let _sharingInProgress = false;
@@ -914,36 +928,141 @@ const ICE = { iceServers: [
   { urls: "turn:openrelay.metered.ca:443",     username: "openrelayproject", credential: "openrelayproject" },
   { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
 ]};
-function setupScreenshare() {
+
+function wireShareControls() {
+  const btnSh  = document.getElementById("btn-share-screen");
+  const btnCam = document.getElementById("btn-share-camera");
+  const btnIso = document.getElementById("btn-isolate-audio");
+  const btnMic = document.getElementById("btn-cam-mic");
+  const btnAud = document.getElementById("btn-toggle-audio");
+  const btnVid = document.getElementById("btn-toggle-video");
+  const btnSt  = document.getElementById("btn-stop-share");
+
+  if (btnSh && !btnSh.dataset.wired) {
+    btnSh.dataset.wired = "1";
+    btnSh.addEventListener("click", startShare);
+  }
+  if (btnCam && !btnCam.dataset.wired) {
+    btnCam.dataset.wired = "1";
+    btnCam.addEventListener("click", startCamera);
+  }
+  if (btnIso && !btnIso.dataset.wired) {
+    btnIso.dataset.wired = "1";
+    btnIso.addEventListener("click", () => {
+      isolateDiscordAudio = !isolateDiscordAudio;
+      btnIso.classList.toggle("active", isolateDiscordAudio);
+      btnIso.innerHTML = isolateDiscordAudio
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Sem retorno Discord`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Áudio sistema: On`;
+      addSystem(isolateDiscordAudio
+        ? "🛡️ Modo sem retorno ativado: o áudio do Discord/sistema será excluído (compartilhe uma aba para enviar som)."
+        : "⚠️ Áudio do sistema liberado: pode incluir som do Discord ou outros apps.");
+    });
+  }
+  if (btnMic && !btnMic.dataset.wired) {
+    btnMic.dataset.wired = "1";
+    btnMic.addEventListener("click", () => {
+      cameraMicEnabled = !cameraMicEnabled;
+      btnMic.classList.toggle("active", cameraMicEnabled);
+      btnMic.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg> Mic: ${cameraMicEnabled ? "On" : "Off"}`;
+    });
+  }
+  if (btnAud && !btnAud.dataset.wired) {
+    btnAud.dataset.wired = "1";
+    btnAud.addEventListener("click", () => {
+      if (!localStream) return;
+      const tracks = localStream.getAudioTracks();
+      if (!tracks.length) return;
+      const nextEnabled = !tracks[0].enabled;
+      tracks.forEach(t => { t.enabled = nextEnabled; });
+      btnAud.textContent = nextEnabled ? "🔊 Áudio" : "🔇 Áudio";
+      btnAud.classList.toggle("ctrl-muted", !nextEnabled);
+    });
+  }
+  if (btnVid && !btnVid.dataset.wired) {
+    btnVid.dataset.wired = "1";
+    btnVid.addEventListener("click", () => {
+      if (!localStream) return;
+      const tracks = localStream.getVideoTracks();
+      if (!tracks.length) return;
+      const nextEnabled = !tracks[0].enabled;
+      tracks.forEach(t => { t.enabled = nextEnabled; });
+      btnVid.textContent = nextEnabled ? "📷 Vídeo" : "🚫 Vídeo";
+      btnVid.classList.toggle("ctrl-muted", !nextEnabled);
+    });
+  }
+  if (btnSt && !btnSt.dataset.wired) {
+    btnSt.dataset.wired = "1";
+    btnSt.addEventListener("click", stopShare);
+  }
+}
+
+function updateShareButtonsUI(active) {
+  const btnSh  = document.getElementById("btn-share-screen");
+  const btnCam = document.getElementById("btn-share-camera");
+  const btnIso = document.getElementById("btn-isolate-audio");
+  const btnMic = document.getElementById("btn-cam-mic");
+  const btnAud = document.getElementById("btn-toggle-audio");
+  const btnVid = document.getElementById("btn-toggle-video");
+  const btnSt  = document.getElementById("btn-stop-share");
+
+  if (btnSh)  btnSh.style.display  = active ? "none" : "flex";
+  if (btnCam) btnCam.style.display = active ? "none" : "flex";
+  if (btnIso) btnIso.style.display = active ? "none" : "flex";
+  if (btnMic) btnMic.style.display = active ? "none" : "flex";
+  if (btnSt)  btnSt.style.display  = active ? "flex" : "none";
+
+  const hasAudio = active && localStream && localStream.getAudioTracks().length > 0;
+  if (btnAud) {
+    btnAud.style.display = hasAudio ? "flex" : "none";
+    btnAud.textContent = "🔊 Áudio";
+    btnAud.classList.remove("ctrl-muted");
+  }
+  if (btnVid) {
+    btnVid.style.display = (active && localStreamKind === "camera") ? "flex" : "none";
+    btnVid.textContent = "📷 Vídeo";
+    btnVid.classList.remove("ctrl-muted");
+  }
+}
+
+function setupScreenshare(type) {
   if (rtcSetup) return; rtcSetup = true;
-  document.title = "🖥️ Screen Share — Watch Party";
+  document.title = type === "camera" ? "📷 Camera Stream — Watch Party" : "🖥️ Screen Share — Watch Party";
   ensureStreamGrid();
   setupRTCSignaling();
-  const pc     = document.getElementById('player-controls');
-  const btnSh  = document.getElementById('btn-share-screen');
-  const btnSt  = document.getElementById('btn-stop-share');
-  const btnFs  = document.getElementById('btn-fullscreen');
+  const pc    = document.getElementById('player-controls');
+  const btnFs = document.getElementById('btn-fullscreen');
   if (pc) pc.style.display = 'flex';
   // Show share controls for host
   const shareGroup = document.getElementById("ctrl-share-group");
   if (shareGroup) shareGroup.style.display = "flex";
-  if (btnSh) btnSh.addEventListener('click', startShare);
-  if (btnSt) btnSt.addEventListener('click', stopShare);
-  if (btnFs) btnFs.addEventListener('click', () => {
-    const v = document.getElementById('screen-video') || document.getElementById('media-container');
-    if (v?.requestFullscreen) v.requestFullscreen();
-  });
+  wireShareControls();
+  if (btnFs && !btnFs.dataset.wired) {
+    btnFs.dataset.wired = "1";
+    btnFs.addEventListener('click', () => {
+      const v = document.getElementById('screen-video') || document.getElementById('media-container');
+      if (v?.requestFullscreen) v.requestFullscreen();
+    });
+  }
 }
 
-function setupRTCViewer() {
+function setupRTCViewer(type) {
   if (rtcSetup) return; rtcSetup = true;
-  document.title = "🖥️ Screen Share — Watch Party";
+  document.title = type === "camera" ? "📷 Camera Stream — Watch Party" : "🖥️ Screen Share — Watch Party";
   ensureStreamGrid();
   setupRTCSignaling();
   const pc = document.getElementById("player-controls");
   const waiting = document.getElementById("ctrl-viewer-waiting");
+  const btnFs = document.getElementById("btn-fullscreen");
   if (pc) pc.style.display = "flex";
   if (waiting) waiting.style.display = "flex";
+  if (btnFs && !btnFs.dataset.wired) {
+    btnFs.dataset.wired = "1";
+    btnFs.addEventListener("click", () => {
+      const v = document.getElementById("screen-video") || document.getElementById("media-container");
+      if (v?.requestFullscreen) v.requestFullscreen();
+    });
+  }
   addSystem("Aguardando stream do host…");
   setTimeout(() => socket.emit("rtc-request-stream"), 800);
 }
@@ -958,7 +1077,8 @@ function ensureStreamGrid() {
 }
 function setupRTCSignaling() {
   socket.on("rtc-request-stream", ({ from }) => { if (localStream && from !== socket.id) sendOffer(from); });
-  socket.on("rtc-offer", async ({ from, sdp }) => {
+  socket.on("rtc-offer", async ({ from, sdp, kind }) => {
+    if (kind) remoteStreamKinds.set(from, kind === "camera" ? "camera" : "screen");
     addSystem("Recebendo stream…");
     const pc = newPC(from, false);
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -986,47 +1106,128 @@ async function startShare() {
   _sharingInProgress = true;
   try {
     closeAllPeers();
-    localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    const displayOptions = {
+      video: { frameRate: { ideal: 30, max: 60 } },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: false,
+        suppressLocalAudioPlayback: false,
+      },
+      selfBrowserSurface: "exclude",
+      surfaceSwitching: "include",
+      systemAudio: isolateDiscordAudio ? "exclude" : "include",
+    };
+
+    try {
+      localStream = await navigator.mediaDevices.getDisplayMedia(displayOptions);
+    } catch (optErr) {
+      if (optErr.name === "NotAllowedError" || optErr.name === "AbortError") throw optErr;
+      // Fallback for browsers that reject extended constraints
+      localStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: { echoCancellation: true },
+      });
+    }
+
+    localStreamKind = "screen";
 
     // Host also uses the stream-grid so all streams (own + others) are visible together
-    addStreamVideo(myId || "local", localStream);
+    addStreamVideo(myId || "local", localStream, { isCamera: false });
+    updateShareButtonsUI(true);
 
-    const _bsh = document.getElementById("btn-share-screen");
-    const _bst = document.getElementById("btn-stop-share");
-    if (_bsh) _bsh.style.display = "none";
-    if (_bst) _bst.style.display = "flex";
-    addSystem("Compartilhando sua tela.");
-    socket.emit("stream-started");
+    const videoTrack = localStream.getVideoTracks()[0];
+    const displaySurface = videoTrack?.getSettings?.()?.displaySurface;
+    const hasAudio = localStream.getAudioTracks().length > 0;
 
-    localStream.getVideoTracks()[0].onended = stopShare;
+    if (isolateDiscordAudio) {
+      if (displaySurface === "browser" && hasAudio) {
+        addSystem("🛡️ Compartilhando aba com áudio isolado (sem retorno do Discord).");
+      } else if (!hasAudio && (displaySurface === "monitor" || displaySurface === "window")) {
+        addSystem("🛡️ Áudio do sistema bloqueado para evitar retorno do Discord. Para transmitir com som, compartilhe uma aba do navegador.");
+      } else {
+        addSystem("🖥️ Compartilhando sua tela.");
+      }
+    } else {
+      addSystem(hasAudio
+        ? "⚠️ Compartilhando tela com áudio do sistema (pode incluir som do Discord)."
+        : "🖥️ Compartilhando sua tela.");
+    }
+
+    socket.emit("stream-started", { kind: "screen" });
+
+    if (videoTrack) videoTrack.onended = stopShare;
   } catch (err) {
     _sharingInProgress = false;
+    localStreamKind = null;
     if (err.name === "NotAllowedError") addSystem("Compartilhamento cancelado.");
     else { addSystem("Erro ao compartilhar: " + (err.message || err.name)); console.error("[screenshare]", err); }
+  }
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    addSystem("⚠️ Transmissão de câmera não disponível neste dispositivo.");
+    return;
+  }
+  if (_sharingInProgress) return;
+  _sharingInProgress = true;
+  try {
+    closeAllPeers();
+    const camOptions = {
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        facingMode: "user",
+      },
+      audio: cameraMicEnabled
+        ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        : false,
+    };
+
+    localStream = await navigator.mediaDevices.getUserMedia(camOptions);
+    localStreamKind = "camera";
+
+    addStreamVideo(myId || "local", localStream, { isCamera: true });
+    updateShareButtonsUI(true);
+
+    addSystem(cameraMicEnabled
+      ? "📷 Transmitindo câmera com microfone."
+      : "📷 Transmitindo câmera (sem microfone — ideal quando estiver em call no Discord).");
+
+    socket.emit("stream-started", { kind: "camera" });
+
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack) videoTrack.onended = stopShare;
+  } catch (err) {
+    _sharingInProgress = false;
+    localStreamKind = null;
+    if (err.name === "NotAllowedError") addSystem("⚠️ Permissão de câmera negada.");
+    else if (err.name === "NotFoundError") addSystem("⚠️ Nenhuma câmera encontrada neste dispositivo.");
+    else if (err.name === "NotReadableError") addSystem("⚠️ A câmera está em uso por outro aplicativo.");
+    else { addSystem("Erro ao iniciar câmera: " + (err.message || err.name)); console.error("[camera]", err); }
   }
 }
 
 
 function stopShare() {
   _sharingInProgress = false;
+  localStreamKind = null;
   if (localStream) {
     localStream.getTracks().forEach(t => t.stop());
     localStream = null;
   }
   removeStreamVideo(myId || "local");
   closeAllPeers();
-  const _bsh = document.getElementById("btn-share-screen");
-  const _bst = document.getElementById("btn-stop-share");
-  if (_bsh) _bsh.style.display = "flex";
-  if (_bst) _bst.style.display = "none";
+  updateShareButtonsUI(false);
   if (socket) socket.emit("stream-stopped");
-  addSystem("Compartilhamento encerrado.");
+  addSystem("Transmissão encerrada.");
 }
 async function sendOffer(peerId) {
   const pc = newPC(peerId, true);
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-  socket.emit("rtc-offer", { to: peerId, sdp: offer });
+  socket.emit("rtc-offer", { to: peerId, sdp: offer, kind: localStreamKind || "screen" });
 }
 
 function newPC(peerId, isHostPeer) {
@@ -1051,8 +1252,9 @@ function newPC(peerId, isHostPeer) {
     const doAdd = () => {
       const member = roomMembers.get(peerId);
       const memberName = member ? member.name : peerId.slice(0, 6);
-      addStreamVideo(peerId, stream);
-      addSystem("📺 Recebendo tela de " + memberName + ".");
+      const isCam = remoteStreamKinds.get(peerId) === "camera";
+      addStreamVideo(peerId, stream, { isCamera: isCam });
+      addSystem((isCam ? "📷 Recebendo câmera de " : "📺 Recebendo tela de ") + memberName + ".");
       const _wt = document.getElementById("ctrl-viewer-waiting");
       const _rv = document.getElementById("ctrl-viewer-receiving");
       if (_wt) _wt.style.display = "none";

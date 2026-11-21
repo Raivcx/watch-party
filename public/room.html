@@ -42,9 +42,27 @@
       </div>
 <div id="player-controls">
         <div id="ctrl-share-group" style="display:none">
-          <button id="btn-share-screen" class="ctrl-btn ctrl-primary">
+          <button id="btn-share-screen" class="ctrl-btn ctrl-primary" title="Compartilhar tela ou aba">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            Compartilhar Tela
+            Tela
+          </button>
+          <button id="btn-share-camera" class="ctrl-btn ctrl-camera" title="Transmitir câmera (webcam)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+            Câmera
+          </button>
+          <button id="btn-isolate-audio" class="ctrl-btn ctrl-toggle active" title="Isola o áudio na aba compartilhada — evita retorno do Discord ou outros apps de voz">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Sem retorno Discord
+          </button>
+          <button id="btn-cam-mic" class="ctrl-btn ctrl-toggle" title="Incluir microfone ao transmitir câmera (desativado por padrão para evitar eco com o Discord)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            Mic: Off
+          </button>
+          <button id="btn-toggle-audio" class="ctrl-btn" style="display:none" title="Mutar/desmutar áudio da transmissão">
+            🔊 Áudio
+          </button>
+          <button id="btn-toggle-video" class="ctrl-btn" style="display:none" title="Pausar/retomar vídeo da câmera">
+            📷 Vídeo
           </button>
           <button id="btn-stop-share" class="ctrl-btn ctrl-danger" style="display:none">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>

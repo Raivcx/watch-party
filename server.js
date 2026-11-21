@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import {
   createRoom, getRoom, deleteRoom, getRoomCount,
-  getRoomMembers, listRooms,
+  getRoomMembers, listRooms, setOnRoomClosed,
 } from "./lib/roomStore.js";
 import { createSession, getSession, deleteSession, parseCookie } from "./lib/sessions.js";
 
@@ -394,9 +394,10 @@ io.on("connection", (socket) => {
 
 
   // Stream lifecycle
-  socket.on("stream-started", () => {
+  socket.on("stream-started", (payload) => {
     if (!currentRoomId) return;
-    socket.to(currentRoomId).emit("stream-started", { from: socket.id });
+    const kind = payload?.kind === "camera" ? "camera" : "screen";
+    socket.to(currentRoomId).emit("stream-started", { from: socket.id, kind });
   });
 
   // Stream lifecycle ÔÇö stop
@@ -498,7 +499,7 @@ io.on("connection", (socket) => {
   // (override the existing stream-started handler to check permission)
 
     // WebRTC signaling
-  socket.on("rtc-offer",  ({ to, sdp })       => io.to(to).emit("rtc-offer",  { from: socket.id, sdp }));
+  socket.on("rtc-offer",  ({ to, sdp, kind }) => io.to(to).emit("rtc-offer",  { from: socket.id, sdp, kind }));
   socket.on("rtc-answer", ({ to, sdp })       => io.to(to).emit("rtc-answer", { from: socket.id, sdp }));
   socket.on("rtc-ice",    ({ to, candidate }) => io.to(to).emit("rtc-ice",    { from: socket.id, candidate }));
   socket.on("rtc-request-stream", () => {
@@ -533,7 +534,7 @@ io.on("connection", (socket) => {
           const r = getRoom(currentRoomId);
           if (!r || r.hostSocketId) return; // already reclaimed or destroyed
 
-          if (room.type === "screenshare") {
+          if (room.type === "screenshare" || room.type === "camera") {
             const activeSockets = io.sockets.adapter.rooms.get(currentRoomId);
             // Prefer the creator if they are still in the room
           const allSockets = activeSockets ? [...activeSockets] : [];
@@ -571,6 +572,21 @@ io.on("connection", (socket) => {
       });
     }
   });
+});
+
+// Notify connected room members when a room is closed externally (e.g. Discord /close)
+setOnRoomClosed((roomId, meta = {}) => {
+  const by = meta.closedBy ? ` por ${meta.closedBy}` : "";
+  io.to(roomId).emit("room-closed", {
+    message: `Esta sala foi fechada pelo Discord${by}.`,
+  });
+  const roomSockets = io.sockets.adapter.rooms.get(roomId);
+  if (roomSockets) {
+    for (const sid of [...roomSockets]) {
+      const s = io.sockets.sockets.get(sid);
+      if (s) s.leave(roomId);
+    }
+  }
 });
 
 httpServer.listen(PORT, () => {

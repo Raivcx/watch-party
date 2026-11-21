@@ -23,12 +23,24 @@ export const commands = [
   // /screenshare
   {
     name: "screenshare",
-    description: "Cria uma sala de compartilhamento de tela via WebRTC",
+    description: "Cria uma sala de compartilhamento de tela ou câmera via WebRTC",
+  },
+
+  // /camera
+  {
+    name: "camera",
+    description: "Cria uma sala de stream de câmera via WebRTC",
   },
 
   // /status
   {
     name: "status",
     description: "Mostra as salas abertas no servidor com links para entrar",
+  },
+
+  // /close
+  {
+    name: "close",
+    description: "Abre um menu para selecionar e fechar uma sala ativa",
   },
 ];
